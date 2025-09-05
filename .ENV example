@@ -1,0 +1,7 @@
+# .env.example
+# Template for .env file with Telegram API credentials
+# Replace with your own values from https://my.telegram.org
+
+API_ID=your_api_id
+API_HASH=your_api_hash
+PHONE=+your_phone_number
