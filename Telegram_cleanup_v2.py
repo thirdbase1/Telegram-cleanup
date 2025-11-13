@@ -83,7 +83,7 @@ def save_log(logs):
     print(f"📝 Log saved to {LOG_FILE}")
 
 # --- Dialog Processing Logic ---
-async def process_dialog(client, entity, kept_bots, prefs, logs, progress, max_retries=10):
+async def process_dialog(client, entity, kept_bots, logs, progress, max_retries=10):
     name = entity.title if hasattr(entity, 'title') else entity.username or f"ID: {entity.id}"
     if entity.id in progress["processed_ids"]:
         print(f"⏩ Already processed: {name}")
@@ -103,7 +103,7 @@ async def process_dialog(client, entity, kept_bots, prefs, logs, progress, max_r
                 # Bot handling
                 username = (entity.username or "").lower()
                 if entity.bot:
-                    if username in kept_bots or username in prefs["kept_bots"]:
+                    if username in kept_bots:
                         print(f"⏩ Skipping bot: {name}")
                         if name not in logs["skipped_bots"]:
                             logs["skipped_bots"].append(name)
@@ -136,7 +136,7 @@ async def process_dialog(client, entity, kept_bots, prefs, logs, progress, max_r
                 wait_time = min(30 * (2 ** retry_count), 300)  # Exponential backoff
             print(f"⏳ Rate limit hit for {name}, waiting {wait_time} seconds")
             await asyncio.sleep(wait_time)
-            retry_.count += 1
+            retry_count += 1
         except Exception as e:
             print(f"⚠️ Error processing {name}: {str(e)}")
             logs["errors"].append(f"Error processing {name}: {str(e)}")
@@ -149,7 +149,7 @@ async def process_dialog(client, entity, kept_bots, prefs, logs, progress, max_r
 async def main():
     # Initialize client
     client = TelegramClient(SESSION_NAME, API_ID_INT, API_HASH)
-    
+
     try:
         await client.start(phone=PHONE)
         print("✅ Logged in successfully")
@@ -186,11 +186,10 @@ async def main():
 
     # Prompt for bots to keep (with empty string filtering)
     kept_bots_input = input("📝 Enter usernames of bots you created (comma-separated, e.g., @MyBot1,@MyBot2, or none): ")
-    kept_bots = [b.strip().lower() for b in kept_bots_input.split(",") if b.strip()]
-    # Filter out empty strings and de-duplicate
-    for b in kept_bots:
-        if b and b not in prefs["kept_bots"]:
-            prefs["kept_bots"].append(b)
+    user_kept_bots = {b.strip().lower() for b in kept_bots_input.split(",") if b.strip()}
+
+    # Consolidate with preferences
+    prefs["kept_bots"] = sorted(list(set(prefs["kept_bots"]) | user_kept_bots))
 
     # Fetch dialogs with retries
     max_retries = 10
@@ -234,7 +233,7 @@ async def main():
     for i in range(0, len(dialogs), batch_size):
         batch = dialogs[i:i + batch_size]
         print(f"📦 Processing batch {i//batch_size + 1} ({len(batch)} chats)")
-        tasks = [sem_task(client, dialog.entity, kept_bots, prefs, logs, progress)
+        tasks = [sem_task(client, dialog.entity, prefs["kept_bots"], logs, progress)
                  for dialog in batch if dialog.entity and dialog.entity.id not in progress["processed_ids"]]
         await asyncio.gather(*tasks, return_exceptions=True)
         await asyncio.sleep(10)  # Increased delay to avoid rate limits
@@ -254,7 +253,7 @@ async def main():
             for i in range(0, len(dialogs), batch_size):
                 batch = dialogs[i:i + batch_size]
                 print(f"📦 Verification Pass {pass_num + 1}, batch {i//batch_size + 1} ({len(batch)} chats)")
-                tasks = [sem_task(client, dialog.entity, kept_bots, prefs, logs, progress)
+                tasks = [sem_task(client, dialog.entity, prefs["kept_bots"], logs, progress)
                          for dialog in batch if dialog.entity]
                 await asyncio.gather(*tasks, return_exceptions=True)
                 await asyncio.sleep(10)
