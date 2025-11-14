@@ -1,6 +1,6 @@
 # Telegram Cleanup Script
 
-This Python script (`telegram_cleanup.py`) automates the process of cleaning up a Telegram account by removing unwanted chats, including channels, groups, bots, and private messages, while preserving specified bots.
+This Python script (`telegram-cleanup`) automates the process of cleaning up a Telegram account by removing unwanted chats, including channels, groups, bots, and private messages, while preserving specified bots.
 
 ## Purpose
 
@@ -10,58 +10,9 @@ The script helps you reset your Telegram account to a clean state by:
 - Blocking and deleting all private chats, including "deleted account" chats.
 - Ensuring no chats remain, mimicking a fresh Telegram account.
 
-## How to Read the Script
-
-The script uses the **Telethon** library to interact with Telegram’s API. Below is a breakdown of its structure for beginners:
-
-### Key Sections
-
-1. **Imports and Setup**:
-   - Imports `asyncio` for asynchronous operations, `json` for file handling, and `telethon` for Telegram API calls.
-   - Loads `API_ID`, `API_HASH`, and `PHONE` from a `.env` file using `python-dotenv`.
-   - Validates credentials to ensure they’re present.
-
-2. **File Management**:
-   - `telegram_prefs.json`: Stores usernames of bots to keep.
-   - `cleanup_progress.json`: Tracks processed chat IDs to resume after interruptions.
-   - `cleanup_log_*.json`: Logs actions (e.g., channels left) with timestamps.
-   - `telegram_cleanup.session`: Stores the Telegram session (do not share).
-
-3. **Main Functions**:
-   - `load_preferences()`: Loads bot exclusion list.
-   - `save_preferences()`: Saves updated bot list.
-   - `load_progress()`: Loads processed chat IDs.
-   - `save_progress()`: Saves progress after each action.
-   - `save_log()`: Saves cleanup logs.
-   - `process_dialog()`: Handles each chat (leave channels/groups, block/delete bots/users).
-   - `main()`: Manages login, chat fetching, batch processing, and verification.
-
-4. **Error Handling**:
-   - Handles Telegram rate limits (`FloodWaitError`) with retries and backoff.
-   - Catches authentication errors and 2FA prompts.
-   - Logs errors to `cleanup_log_*.json`.
-
-5. **Cleanup Process**:
-   - Fetches all chats with `client.iter_dialogs()`.
-   - Waits 20 seconds before starting.
-   - Processes chats in batches (5–20 chats).
-   - Runs up to 4 verification passes to ensure no chats remain.
-   - Skips specified bots (e.g., `@Somnia_testbot`).
-
-### Reading Tips
-
-- **Comments**: Minimal but clear. Focus on `process_dialog()` for chat handling logic.
-- **Emojis**: Used in output (e.g., ✅ for success, ⚠️ for warnings).
-- **Async Code**: Uses `async`/`await` for efficient API calls.
-- **Logs**: Check `cleanup_log_*.json` for errors.
-
-Start with the `main()` function to follow the flow, then check `process_dialog()` for per-chat logic.
-
 ## Prerequisites
 
 - **Python 3.6+**: Install Python on Termux or desktop.
-- **Telethon**: Python library for Telegram API.
-- **python-dotenv**: For environment variables.
 - **Telegram API Credentials**: From [my.telegram.org](https://my.telegram.org).
 
 ## Getting Telegram API Credentials
@@ -79,29 +30,15 @@ Start with the `main()` function to follow the flow, then check `process_dialog(
 
 ## Setup Instructions
 
-1. **Install Dependencies**
-
-   **Termux:**
-   ```bash
-   pkg update && pkg upgrade
-   pkg install python git
-   pip install telethon python-dotenv
-   ```
-
-   **Desktop:**
-   ```bash
-   pip install telethon python-dotenv
-   ```
-
-2. **Clone the Repository**
+1. **Clone the Repository**
    ```bash
    git clone https://github.com/thirdbase1/telegram-cleanup.git
    cd telegram-cleanup
    ```
 
-3. **Create `.env` File**
+2. **Create `.env` File**
    ```bash
-   cp .env.example .env
+   cp .ENV.example .env
    nano .env
    ```
    Add your credentials:
@@ -111,9 +48,23 @@ Start with the `main()` function to follow the flow, then check `process_dialog(
    PHONE=+your_phone_number
    ```
 
+3. **Install the Script**
+
+   **Termux:**
+   ```bash
+   pkg update && pkg upgrade
+   pkg install python git
+   pip install .
+   ```
+
+   **Desktop:**
+   ```bash
+   pip install .
+   ```
+
 4. **Run the Script**
    ```bash
-   python telegram_cleanup.py
+   telegram-cleanup
    ```
    - Enter the Telegram verification code.
    - Enter 2FA password if enabled.
@@ -149,8 +100,10 @@ Errors encountered: 0
 
 ## Files
 
-- `telegram_cleanup.py`: Main cleanup script.
-- `.env.example`: Template for `.env`.
+- `src/telegram_cleanup.py`: Main cleanup script.
+- `src/config.py`: Configuration loader.
+- `setup.py`: Installation script.
+- `.ENV.example`: Template for `.env`.
 - `telegram_prefs.json`: Bot exclusions (generated).
 - `cleanup_progress.json`: Progress tracking (generated).
 - `cleanup_log_*.json`: Action logs (generated).
@@ -178,7 +131,7 @@ Errors encountered: 0
   - Delete and retry:
     ```bash
     rm telegram_cleanup.session
-    python telegram_cleanup.py
+    telegram-cleanup
     ```
 - **Rate Limits:**  
   Rerun to resume from `cleanup_progress.json`.
