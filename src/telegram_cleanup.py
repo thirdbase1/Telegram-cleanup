@@ -2,73 +2,78 @@ import asyncio
 import json
 import os
 import time
+import sys
+import tempfile
 from datetime import datetime
 from dotenv import load_dotenv
 from telethon import TelegramClient, errors
 from telethon.tl.types import Channel, User
 from telethon.tl.functions.channels import LeaveChannelRequest
 from telethon.tl.functions.contacts import BlockRequest
+import getpass
 
-# Load environment variables
-load_dotenv()
-API_ID = os.getenv("API_ID")
-API_HASH = os.getenv("API_HASH")
-PHONE = os.getenv("PHONE")
+# --- Utility: Atomic File Writing ---
+def atomic_write(filename, data):
+    """Safely write JSON data to a file atomically."""
+    try:
+        with tempfile.NamedTemporaryFile('w', delete=False, dir='.') as tf:
+            json.dump(data, tf, indent=4)
+            tempname = tf.name
+        os.replace(tempname, filename)
+    except Exception as e:
+        print(f"⚠️ Atomic write failed for {filename}: {str(e)}")
 
-# Validate credentials
-if not all([API_ID, API_HASH, PHONE]):
-    print("❌ Error: Missing API_ID, API_HASH, or PHONE in .env file")
-    exit(1)
+# --- Load environment variables ---
+from .config import load_config
+config = load_config()
+API_ID_INT = config["api_id"]
+API_HASH = config["api_hash"]
+PHONE = config["phone"]
 
-# Session and file paths
+# --- Session and file paths ---
 SESSION_NAME = "telegram_cleanup"
 PREF_FILE = "telegram_prefs.json"
 LOG_FILE = f"cleanup_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 PROGRESS_FILE = "cleanup_progress.json"
 
-# Load preferences (for bot exclusions)
+# --- Load preferences (for bot exclusions) ---
 def load_preferences():
     try:
         with open(PREF_FILE, "r") as f:
             return json.load(f)
     except FileNotFoundError:
         return {"kept_bots": []}
-
-# Save preferences
-def save_preferences(prefs):
-    try:
-        with open(PREF_FILE, "w") as f:
-            json.dump(prefs, f, indent=4)
-        print("✅ Preferences saved")
     except Exception as e:
-        print(f"⚠️ Error saving preferences: {str(e)}")
+        print(f"⚠️ Error loading preferences: {str(e)}")
+        return {"kept_bots": []}
 
-# Load progress
+# --- Save preferences ---
+def save_preferences(prefs):
+    atomic_write(PREF_FILE, prefs)
+    print("✅ Preferences saved")
+
+# --- Load progress ---
 def load_progress():
     try:
         with open(PROGRESS_FILE, "r") as f:
             return json.load(f)
     except FileNotFoundError:
         return {"processed_ids": []}
+    except Exception as e:
+        print(f"⚠️ Error loading progress: {str(e)}")
+        return {"processed_ids": []}
 
-# Save progress
+# --- Save progress ---
 def save_progress(progress):
-    try:
-        with open(PROGRESS_FILE, "w") as f:
-            json.dump(progress, f, indent=4)
-    except Exception as e:
-        print(f"⚠️ Error saving progress: {str(e)}")
+    atomic_write(PROGRESS_FILE, progress)
 
-# Save log
+# --- Save log ---
 def save_log(logs):
-    try:
-        with open(LOG_FILE, "w") as f:
-            json.dump(logs, f, indent=4)
-        print(f"📝 Log saved to {LOG_FILE}")
-    except Exception as e:
-        print(f"⚠️ Error saving log: {str(e)}")
+    atomic_write(LOG_FILE, logs)
+    print(f"📝 Log saved to {LOG_FILE}")
 
-async def process_dialog(client, entity, kept_bots, prefs, logs, progress, max_retries=10):
+# --- Dialog Processing Logic ---
+async def process_dialog(client, entity, kept_bots, logs, progress, max_retries=10):
     name = entity.title if hasattr(entity, 'title') else entity.username or f"ID: {entity.id}"
     if entity.id in progress["processed_ids"]:
         print(f"⏩ Already processed: {name}")
@@ -78,24 +83,28 @@ async def process_dialog(client, entity, kept_bots, prefs, logs, progress, max_r
         try:
             if isinstance(entity, Channel):
                 await client(LeaveChannelRequest(entity))
-                if entity.broadcast:
+                if getattr(entity, 'broadcast', False):
                     logs["channels_left"] += 1
                     print(f"🚪 Left channel: {name}")
                 else:
                     logs["groups_left"] += 1
                     print(f"🚪 Left group: {name}")
             elif isinstance(entity, User):
+                # Bot handling
+                username = (entity.username or "").lower()
                 if entity.bot:
-                    if (entity.username or "").lower() in kept_bots or (entity.username or "").lower() in prefs["kept_bots"]:
+                    if username in kept_bots:
                         print(f"⏩ Skipping bot: {name}")
-                        logs["skipped_bots"].append(name)
+                        if name not in logs["skipped_bots"]:
+                            logs["skipped_bots"].append(name)
                     else:
                         await client(BlockRequest(entity.id))
                         await client.delete_dialog(entity)
                         logs["bots_blocked_deleted"] += 1
                         print(f"⛔ Blocked and deleted bot: {name}")
                 else:
-                    if entity.is_deleted:
+                    # Deleted/private chats
+                    if getattr(entity, "is_deleted", False):
                         await client.delete_dialog(entity)
                         logs["private_chats_blocked_deleted"] += 1
                         print(f"🗑️ Deleted private chat (deleted account): {name}")
@@ -126,26 +135,27 @@ async def process_dialog(client, entity, kept_bots, prefs, logs, progress, max_r
     logs["errors"].append(f"Skipped {name} after {max_retries} retries due to rate limits")
     return False
 
+# --- Main Async Routine ---
 async def main():
     # Initialize client
-    client = TelegramClient(SESSION_NAME, int(API_ID), API_HASH)
-    
+    client = TelegramClient(SESSION_NAME, API_ID_INT, API_HASH)
+
     try:
         await client.start(phone=PHONE)
         print("✅ Logged in successfully")
     except errors.PhoneNumberInvalidError:
         print("❌ Error: Invalid phone number format")
-        exit(1)
+        sys.exit(1)
     except errors.SessionPasswordNeededError:
-        password = input("🔑 Enter 2FA password: ")
+        password = getpass.getpass("🔑 Enter 2FA password: ")
         try:
             await client.sign_in(password=password)
         except Exception as e:
             print(f"❌ 2FA error: {str(e)}")
-            exit(1)
+            sys.exit(1)
     except Exception as e:
         print(f"❌ Login error: {str(e)}")
-        exit(1)
+        sys.exit(1)
 
     # Initialize logs
     logs = {
@@ -164,10 +174,12 @@ async def main():
     progress = load_progress()
     print("📋 Loaded preferences and progress")
 
-    # Prompt for bots to keep
-    kept_bots = input("📝 Enter usernames of bots you created (comma-separated, e.g., @MyBot1,@MyBot2, or none): ").split(",")
-    kept_bots = [b.strip().lower() for b in kept_bots if b.strip()]
-    prefs["kept_bots"].extend([b for b in kept_bots if b not in prefs["kept_bots"]])
+    # Prompt for bots to keep (with empty string filtering)
+    kept_bots_input = input("📝 Enter usernames of bots you created (comma-separated, e.g., @MyBot1,@MyBot2, or none): ")
+    user_kept_bots = {b.strip().lower() for b in kept_bots_input.split(",") if b.strip()}
+
+    # Consolidate with preferences
+    prefs["kept_bots"] = sorted(list(set(prefs["kept_bots"]) | user_kept_bots))
 
     # Fetch dialogs with retries
     max_retries = 10
@@ -189,7 +201,7 @@ async def main():
                 print("❌ Max retries reached, exiting")
                 save_log(logs)
                 save_progress(progress)
-                exit(1)
+                sys.exit(1)
             await asyncio.sleep(10)
 
     # Wait 20 seconds after detecting chats
@@ -201,11 +213,17 @@ async def main():
     batch_size = max(5, min(20, chat_count // 20 + 1))  # 5-20 based on chat count
     print(f"📦 Using batch size: {batch_size}")
 
-    # Process dialogs in batches
+    # Process dialogs in batches with concurrency control
+    semaphore = asyncio.Semaphore(5)  # Limit to 5 concurrent tasks
+
+    async def sem_task(*args, **kwargs):
+        async with semaphore:
+            return await process_dialog(*args, **kwargs)
+
     for i in range(0, len(dialogs), batch_size):
         batch = dialogs[i:i + batch_size]
         print(f"📦 Processing batch {i//batch_size + 1} ({len(batch)} chats)")
-        tasks = [process_dialog(client, dialog.entity, kept_bots, prefs, logs, progress)
+        tasks = [sem_task(client, dialog.entity, prefs["kept_bots"], logs, progress)
                  for dialog in batch if dialog.entity and dialog.entity.id not in progress["processed_ids"]]
         await asyncio.gather(*tasks, return_exceptions=True)
         await asyncio.sleep(10)  # Increased delay to avoid rate limits
@@ -225,7 +243,7 @@ async def main():
             for i in range(0, len(dialogs), batch_size):
                 batch = dialogs[i:i + batch_size]
                 print(f"📦 Verification Pass {pass_num + 1}, batch {i//batch_size + 1} ({len(batch)} chats)")
-                tasks = [process_dialog(client, dialog.entity, kept_bots, prefs, logs, progress)
+                tasks = [sem_task(client, dialog.entity, prefs["kept_bots"], logs, progress)
                          for dialog in batch if dialog.entity]
                 await asyncio.gather(*tasks, return_exceptions=True)
                 await asyncio.sleep(10)
@@ -267,10 +285,9 @@ async def main():
     save_progress(progress)
     await client.disconnect()
 
-# Run the script
-if __name__ == "__main__":
-    logs = {}  # Define logs globally to avoid NameError
-    progress = load_progress()  # Load progress early
+def main_cli():
+    logs = {}
+    progress = load_progress()
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
