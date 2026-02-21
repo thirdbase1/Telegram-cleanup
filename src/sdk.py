@@ -45,6 +45,7 @@ class TelegramCleaner:
         self.whitelist_ids = set()
         self.whitelist_usernames = set()
         self.whitelist_titles = set()
+        self.whitelist_counts = {"channels": 0, "groups": 0, "bots": 0, "users": 0}
         self.semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
 
     def _init_logs(self):
@@ -55,7 +56,7 @@ class TelegramCleaner:
             "bots_blocked_deleted": 0,
             "private_chats_blocked_deleted": 0,
             "errors": [],
-            "skipped_bots": [],
+            "skipped_items": [],
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "remaining_chats": 0
         }
@@ -116,29 +117,31 @@ class TelegramCleaner:
         print(f"📝 Log saved to {log_file}")
 
     def _is_whitelisted(self, entity):
-        """Checks if an entity is in the whitelist."""
+        """Checks if an entity is in the whitelist and updates counts if it's the first time."""
+        is_kept = False
         # Check by ID
         if entity.id in self.whitelist_ids:
-            return True
+            is_kept = True
 
         # Check by username
-        if hasattr(entity, 'username') and entity.username:
+        if not is_kept and hasattr(entity, 'username') and entity.username:
             if entity.username.lower() in self.whitelist_usernames:
-                return True
+                is_kept = True
 
         # Check by title (for channels/groups) or first_name/last_name (for users)
-        name = ""
-        if hasattr(entity, 'title'):
-            name = entity.title
-        elif hasattr(entity, 'first_name'):
-            name = entity.first_name
-            if getattr(entity, 'last_name', None):
-                name += f" {entity.last_name}"
+        if not is_kept:
+            name = ""
+            if hasattr(entity, 'title'):
+                name = entity.title
+            elif hasattr(entity, 'first_name'):
+                name = entity.first_name
+                if getattr(entity, 'last_name', None):
+                    name += f" {entity.last_name}"
 
-        if name and name in self.whitelist_titles:
-            return True
+            if name and name in self.whitelist_titles:
+                is_kept = True
 
-        return False
+        return is_kept
 
     async def _process_dialog(self, entity):
         """Processes a single dialog entity with concurrency control."""
@@ -150,15 +153,17 @@ class TelegramCleaner:
         name = entity.title if hasattr(entity, 'title') else (getattr(entity, 'username', None) or f"ID: {entity.id}")
 
         if entity.id in self.progress["processed_ids"]:
-            # print(f"⏩ Already processed: {name}")
             return True
 
         if self._is_whitelisted(entity):
-            print(f"✅ Keeping whitelisted entity: {name}")
-            if name not in self.logs["skipped_bots"]: # We use this for all skipped items now
-                self.logs["skipped_bots"].append(name)
+            print(f"💎 [WHITELISTED] {name}")
+            if name not in self.logs["skipped_items"]:
+                self.logs["skipped_items"].append(name)
             self.progress["processed_ids"].append(entity.id)
             return True
+
+        print(f"🔍 [SCANNING] {name}...")
+        await asyncio.sleep(0.4) # Slightly more delay for better observation
 
         try:
             if isinstance(entity, Channel):
@@ -201,17 +206,20 @@ class TelegramCleaner:
     async def _prepare_whitelist(self, user_kept_items):
         """Resolves whitelisted items to IDs, usernames, and titles."""
         combined_items = set(self.prefs.get("kept_items", [])) | user_kept_items
-        print(f"🔍 Resolving {len(combined_items)} whitelist items...")
+        print(f"\n🧠 [INTELLIGENCE] Analyzing {len(combined_items)} whitelist items...")
 
         for item in combined_items:
             item = str(item).strip()
             if not item:
                 continue
 
+            print(f"📡 Resolving: {item}")
+            await asyncio.sleep(0.1)
+
             # If it's a numeric ID
             if item.replace('-', '').isdigit():
                 self.whitelist_ids.add(int(item))
-                print(f"  + Added to whitelist (by ID): {item}")
+                print(f"  ✅ Added by ID: {item}")
                 continue
 
             # If it looks like a username or link
@@ -227,15 +235,15 @@ class TelegramCleaner:
                     self.whitelist_ids.add(entity.id)
                     if hasattr(entity, 'username') and entity.username:
                         self.whitelist_usernames.add(entity.username.lower())
-                    print(f"  + Added to whitelist (by entity): {item} (ID: {entity.id})")
+                    print(f"  ✅ Added by Entity: {item} (ID: {entity.id})")
                 except Exception as e:
-                    print(f"  ⚠️ Could not resolve {item}: {str(e)}. Will try matching by string.")
+                    print(f"  ⚠️ Resolution failed for {item}, will use string match.")
                     self.whitelist_usernames.add(clean_item.lstrip("@").lower())
             else:
                 # Treat as title or plain username
                 self.whitelist_titles.add(item)
                 self.whitelist_usernames.add(item.lower())
-                print(f"  + Added to whitelist (by name/string): {item}")
+                print(f"  ✅ Added by Name/Title: {item}")
 
         self.prefs["kept_items"] = sorted(list(combined_items))
 
@@ -247,13 +255,14 @@ class TelegramCleaner:
         """
         self._load_data()
 
+        print("\n🚀 [INITIATING] Starting intelligent cleanup sequence...")
         # Always whitelist self (Saved Messages)
         me = await self.client.get_me()
         if me:
             self.whitelist_ids.add(me.id)
             if me.username:
                 self.whitelist_usernames.add(me.username.lower())
-            print(f"✅ Automatically whitelisted your own account (Saved Messages)")
+            print(f"🛡️  [SECURE] Automatically whitelisted your account (Saved Messages)")
 
         # Always whitelist Telegram service notifications
         self.whitelist_ids.add(777000)
@@ -261,12 +270,32 @@ class TelegramCleaner:
         await self._prepare_whitelist(user_kept_items)
         self._save_data() # Persist the updated whitelist immediately
 
-        # --- Fetch Dialogs ---
+        # --- Fetch Dialogs and Update Whitelist Counts ---
+        print("\n📊 [ANALYZING] Scanning your Telegram account to categorize items...")
         dialogs = []
         try:
             async for dialog in self.client.iter_dialogs(limit=None):
+                entity = dialog.entity
+                if self._is_whitelisted(entity):
+                    if isinstance(entity, Channel):
+                        if getattr(entity, 'broadcast', False):
+                            self.whitelist_counts["channels"] += 1
+                        else:
+                            self.whitelist_counts["groups"] += 1
+                    elif isinstance(entity, User):
+                        if entity.bot:
+                            self.whitelist_counts["bots"] += 1
+                        else:
+                            self.whitelist_counts["users"] += 1
                 dialogs.append(dialog)
-            print(f"📊 Found {len(dialogs)} chats")
+
+            print(f"\n📈 [REPORT] Scan Complete:")
+            print(f"  - Total Chats Found: {len(dialogs)}")
+            print(f"  - Whitelisted Channels: {self.whitelist_counts['channels']}")
+            print(f"  - Whitelisted Groups: {self.whitelist_counts['groups']}")
+            print(f"  - Whitelisted Bots: {self.whitelist_counts['bots']}")
+            print(f"  - Whitelisted Private Users: {self.whitelist_counts['users']}")
+
         except Exception as e:
             print(f"❌ Error fetching chats: {str(e)}")
             self.logs["errors"].append(f"Error fetching chats: {str(e)}")
@@ -306,12 +335,14 @@ class TelegramCleaner:
         # --- Final Summary ---
         final_dialogs = [d async for d in self.client.iter_dialogs(limit=None)]
         self.logs["remaining_chats"] = len(final_dialogs)
-        print("\n📊 Cleanup Summary:")
-        for key, value in self.logs.items():
-            if isinstance(value, list):
-                print(f"{key.replace('_', ' ').title()}: {len(value)}")
-            else:
-                print(f"{key.replace('_', ' ').title()}: {value}")
+        print("\n🏆 [MISSION COMPLETE] Final Cleanup Summary:")
+        print(f"  🚪 Channels Left: {self.logs['channels_left']}")
+        print(f"  🚪 Groups Left: {self.logs['groups_left']}")
+        print(f"  ⛔ Bots Blocked/Deleted: {self.logs['bots_blocked_deleted']}")
+        print(f"  ⛔ Private Chats Blocked/Deleted: {self.logs['private_chats_blocked_deleted']}")
+        print(f"  💎 Items Preserved (Whitelisted): {len(self.logs['skipped_items'])}")
+        print(f"  ⚠️ Errors: {len(self.logs['errors'])}")
+        print(f"  📊 Remaining Chats: {self.logs['remaining_chats']}")
 
         self._save_data()
 
