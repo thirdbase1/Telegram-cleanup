@@ -107,7 +107,7 @@ telegram-cleanup
 The first time you run it, you will be prompted for:
 1.  **A login code**: Sent to your Telegram account.
 2.  **Your 2FA password**: If you have Two-Factor Authentication enabled.
-3.  **Bots to keep**: You can enter a comma-separated list of bot usernames (e.g., `@MyBot1,@MyBot2`) that you do not want to delete. If you want to delete all bots, just press `Enter`.
+3.  **Items to keep**: You can enter a comma-separated list of usernames (`@name`), links (`t.me/name`), or exact names of channels/groups that you do not want to delete. If you want to delete everything else, just press `Enter`.
 
 The script will then begin the cleanup process. It will keep you updated on its progress in the terminal.
 

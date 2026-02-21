@@ -1,14 +1,13 @@
 import asyncio
-from .config import load_config
-from .sdk import TelegramCleaner
+import sys
+from src.config import load_config
+from src.sdk import TelegramCleaner
 
-def main_cli():
-    """Command-line interface for the Telegram Cleanup script."""
+async def main():
     config = load_config()
-
     cleaner = TelegramCleaner(config)
 
-    async def run():
+    try:
         await cleaner.connect()
 
         print("\n🔒 WHITELIST: These items will NEVER be deleted.")
@@ -18,10 +17,10 @@ def main_cli():
 
         await cleaner.run_cleanup(user_kept_items)
         await cleaner.disconnect()
-
-    try:
-        asyncio.run(run())
     except KeyboardInterrupt:
-        print("👋 Exiting...")
+        print("\n👋 Exiting...")
     except Exception as e:
-        print(f"❌ Fatal error: {str(e)}")
+        print(f"\n❌ Fatal error: {str(e)}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
