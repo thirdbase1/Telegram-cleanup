@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+*.session
+*.session-journal
+cleanup_log_*.json
+cleanup_progress.json
+telegram_prefs.json
+telegram_cleanup.session

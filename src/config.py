@@ -8,6 +8,7 @@ def load_config():
     api_id = os.getenv("API_ID")
     api_hash = os.getenv("API_HASH")
     phone = os.getenv("PHONE")
+    whitelist_env = os.getenv("WHITELIST", "")
 
     try:
         api_id_int = int(api_id)
@@ -22,5 +23,6 @@ def load_config():
     return {
         "api_id": api_id_int,
         "api_hash": api_hash,
-        "phone": phone
+        "phone": phone,
+        "whitelist": [item.strip() for item in whitelist_env.split(",") if item.strip()]
     }

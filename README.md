@@ -36,10 +36,10 @@ async def main():
     cleaner = TelegramCleaner(config)
     await cleaner.connect()
 
-    user_input = input("📝 Enter bots to keep (comma-separated): ")
-    kept_bots = {b.strip().lower() for b in user_input.split(",") if b.strip()}
+    user_input = input("📝 Enter items to keep (comma-separated): ")
+    kept_items = {b.strip() for b in user_input.split(",") if b.strip()}
 
-    await cleaner.run_cleanup(kept_bots)
+    await cleaner.run_cleanup(kept_items)
     await cleaner.disconnect()
 
 if __name__ == "__main__":
