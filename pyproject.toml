@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "telegram-cleanup"
+version = "1.2.0"
+description = "A professional Telegram account cleanup tool"
+dependencies = [
+    "python-dotenv",
+    "telethon",
+]
+
+[project.scripts]
+telegram-cleanup = "telegram_cleanup.telegram_cleanup:main_cli"
+telegram-cleanup-bot = "telegram_cleanup.bot_interface:main"

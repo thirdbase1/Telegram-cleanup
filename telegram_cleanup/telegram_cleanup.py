@@ -15,8 +15,8 @@ def main_cli():
 
         if not user_kept_items:
             print("\n🔒 WHITELIST: These items will NEVER be deleted.")
-            print("💡 You can enter usernames (@name), full links (t.me/name), or exact names of channels/groups.")
-            print("📝 Example: James bot, Michael, @SomeBot, https://t.me/MyChannel")
+            print("💡 You can enter usernames (@name), full links (t.me/name), exact names of channels/groups, or numeric IDs.")
+            print("📝 Example: `James bot, @Michael, t.me/MyChannel, 1685547486`")
             user_input = input("👉 Enter items to keep (comma-separated, or press Enter to skip): ")
             user_kept_items = {b.strip() for b in user_input.split(",") if b.strip()}
         else:

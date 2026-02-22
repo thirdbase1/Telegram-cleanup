@@ -14,6 +14,7 @@ def load_config():
     api_id = os.getenv("API_ID")
     api_hash = os.getenv("API_HASH")
     phone = os.getenv("PHONE")
+    bot_token = os.getenv("BOT_TOKEN")
     whitelist_env = os.getenv("WHITELIST", "")
 
     # Check for missing variables first
@@ -37,7 +38,8 @@ def load_config():
 
     return {
         "api_id": api_id_int,
-        "api_hash": api_hash.strip(),
-        "phone": phone.strip(),
+        "api_hash": api_hash.strip() if api_hash else None,
+        "phone": phone.strip() if phone else None,
+        "bot_token": bot_token.strip() if bot_token else None,
         "whitelist": [item.strip() for item in whitelist_env.split(",") if item.strip()]
     }

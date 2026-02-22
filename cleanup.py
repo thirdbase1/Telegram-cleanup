@@ -1,5 +1,10 @@
 import asyncio
 import sys
+import os
+
+# Add the current directory to sys.path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from telegram_cleanup.config import load_config
 from telegram_cleanup.sdk import TelegramCleaner
 
