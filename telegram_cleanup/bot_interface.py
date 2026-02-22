@@ -32,6 +32,10 @@ async def start_bot():
 
     try:
         await bot.start(bot_token=token)
+        bot_me = await bot.get_me()
+        bot_username = bot_me.username
+        bot_id = bot_me.id
+        print(f"🤖 Bot is up and running as @{bot_username} (ID: {bot_id})!")
     except errors.rpcerrorlist.ApiIdInvalidError:
         print("❌ FATAL ERROR: Your API_ID or API_HASH is invalid.")
         print("💡 Please check your credentials at https://my.telegram.org")
@@ -39,7 +43,6 @@ async def start_bot():
     except Exception as e:
         print(f"❌ Login error: {e}")
         return
-    print("🤖 Bot is up and running!")
 
     @bot.on(events.NewMessage(pattern='/start'))
     async def handle_start(event):
@@ -63,7 +66,12 @@ async def start_bot():
 
         # Check if user is already logged in
         cleaner = user_clients.get(sender_id)
-        is_logged_in = cleaner and await cleaner.client.is_user_authorized()
+        is_logged_in = False
+        if cleaner:
+            try:
+                is_logged_in = await cleaner.client.is_user_authorized()
+            except:
+                is_logged_in = False
 
         buttons = []
         if not is_logged_in:
@@ -86,15 +94,21 @@ async def start_bot():
 
     @bot.on(events.CallbackQuery(data=b"login"))
     async def handle_login_click(event):
+        try: await event.answer()
+        except: pass
         sender_id = event.sender_id
         user_states[sender_id] = 'WAITING_PHONE'
+        text = "📱 Please enter your phone number in international format (e.g., `+1234567890`):"
+        buttons = [Button.inline("🔙 Back", b"back_to_start")]
         try:
-            await event.edit("📱 Please enter your phone number in international format (e.g., `+1234567890`):")
+            await event.edit(text, buttons=buttons)
         except Exception:
-            await event.respond("📱 Please enter your phone number in international format (e.g., `+1234567890`):")
+            await event.respond(text, buttons=buttons)
 
     @bot.on(events.CallbackQuery(data=b"set_whitelist"))
     async def handle_whitelist_click(event):
+        try: await event.answer()
+        except: pass
         sender_id = event.sender_id
         current = ", ".join(user_whitelists.get(sender_id, [])) or "None"
         text = (
@@ -109,6 +123,8 @@ async def start_bot():
 
     @bot.on(events.CallbackQuery(data=b"back_to_start"))
     async def handle_back(event):
+        try: await event.answer()
+        except: pass
         await send_main_menu(event)
 
     @bot.on(events.NewMessage())
@@ -120,6 +136,11 @@ async def start_bot():
         if text.startswith('/'): return # Ignore other commands
 
         if state == 'WAITING_PHONE':
+            # Clean up old client if exists
+            old_cleaner = user_clients.get(sender_id)
+            if old_cleaner:
+                await old_cleaner.client.disconnect()
+
             await event.respond("⏳ Sending login code...")
             session_name = f"user_{sender_id}"
 
@@ -133,6 +154,16 @@ async def start_bot():
                     print(f"Error sending progress: {e}")
 
             cleaner = TelegramCleaner(config, session_name=session_name, progress_callback=progress_report)
+
+            # PROTECT THE BOT ITSELF FROM BEING DELETED
+            if bot_username:
+                cleaner.whitelist_usernames.add(bot_username.lower())
+            if bot_id:
+                cleaner.whitelist_ids.add(bot_id)
+                cleaner.system_whitelist_ids.add(bot_id)
+
+            print(f"🛡️  Added bot protection (ID: {bot_id}) to whitelist for {session_name}")
+
             user_clients[sender_id] = cleaner
 
             try:
@@ -197,18 +228,20 @@ async def start_bot():
 
     @bot.on(events.CallbackQuery(data=b"run_cleanup"))
     async def handle_run_cleanup(event):
+        try: await event.answer("🚀 Starting...")
+        except: pass
         sender_id = event.sender_id
         if user_states.get(sender_id) != 'READY':
-            await event.answer("⚠️ You must be logged in first!")
+            await event.respond("⚠️ You must be logged in first!", buttons=[Button.inline("🔙 Menu", b"back_to_start")])
             return
 
         cleaner = user_clients.get(sender_id)
         user_states[sender_id] = 'CLEANING'
         text = "⚡ **Cleanup in progress...**\nCheck messages below for live updates."
         try:
-            await event.edit(text)
+            await event.edit(text, buttons=[Button.inline("🔙 Menu", b"back_to_start")])
         except Exception:
-            await event.respond(text)
+            await event.respond(text, buttons=[Button.inline("🔙 Menu", b"back_to_start")])
 
         whitelist = set(user_whitelists.get(sender_id, []))
 
@@ -245,19 +278,27 @@ async def start_bot():
 
     @bot.on(events.CallbackQuery(data=b"logout"))
     async def handle_logout(event):
+        try: await event.answer("👋 Logging out...")
+        except: pass
         sender_id = event.sender_id
         cleaner = user_clients.pop(sender_id, None)
         if cleaner:
             try:
                 await cleaner.client.log_out()
-                await cleaner.disconnect()
+                await cleaner.client.disconnect()
             except Exception:
                 pass
+            # Clean up session file
+            session_file = f"user_{sender_id}.session"
+            if os.path.exists(session_file):
+                os.remove(session_file)
+
         user_states[sender_id] = 'IDLE'
+        text = "👋 Logged out successfully. Your session data has been cleared."
         try:
-            await event.edit("👋 Logged out successfully.", buttons=[Button.inline("🔙 Menu", b"back_to_start")])
+            await event.edit(text, buttons=[Button.inline("🔙 Menu", b"back_to_start")])
         except Exception:
-            await event.respond("👋 Logged out successfully.", buttons=[Button.inline("🔙 Menu", b"back_to_start")])
+            await event.respond(text, buttons=[Button.inline("🔙 Menu", b"back_to_start")])
 
     await bot.run_until_disconnected()
 

@@ -29,16 +29,16 @@ def _atomic_write(filename, data):
 
 class AdaptiveRateLimiter:
     """Intelligently manages delays and concurrency to avoid FloodWaitErrors."""
-    def __init__(self, base_delay=1.2):
+    def __init__(self, base_delay=0.8):
         self.base_delay = base_delay
         self.current_delay = base_delay
         self.multiplier = 1.0
-        self.max_concurrency = 5
-        self.concurrency = 3 # Start with a moderate concurrency
+        self.max_concurrency = 8
+        self.concurrency = 4 # Start with a moderate concurrency
 
     async def wait(self):
         # Destructive actions need a gap
-        delay = (self.current_delay * self.multiplier) + (random.random() * 0.5)
+        delay = (self.current_delay * self.multiplier) + (random.random() * 0.3)
         await asyncio.sleep(delay)
 
     def backoff(self, seconds):
@@ -50,9 +50,9 @@ class AdaptiveRateLimiter:
 
     def cooldown(self):
         """Slowly reduces the multiplier and increases concurrency when things are working well."""
-        self.multiplier = max(1.0, self.multiplier * 0.92)
-        if self.multiplier < 1.5 and self.concurrency < self.max_concurrency:
-            if random.random() < 0.1: # Slowly ramp up
+        self.multiplier = max(1.0, self.multiplier * 0.90)
+        if self.multiplier < 1.2 and self.concurrency < self.max_concurrency:
+            if random.random() < 0.2: # Ramp up
                 self.concurrency += 1
                 print(f"📈 Limiter: Increasing concurrency to {self.concurrency}")
 
@@ -333,6 +333,8 @@ class TelegramCleaner:
         self.whitelist_ids.add(777000)
         self.system_whitelist_ids.add(777000)
 
+        # PROTECT THE BOT ITSELF IF RUNNING IN BOT MODE
+        # (This is a safety double-check)
         await self._prepare_whitelist(user_kept_items)
         self._save_data() # Persist the updated whitelist immediately
 
