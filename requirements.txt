@@ -2,3 +2,5 @@ telethon
 python-dotenv
 flask
 gunicorn
+pyaes
+rsa
