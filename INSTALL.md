@@ -125,11 +125,17 @@ The script will then begin the cleanup process. It will keep you updated on its 
 
 ## Troubleshooting
 
--   **`command not found: telegram-cleanup`**: This can happen on Termux if the `pip` installation directory is not in your `PATH`. You can fix this by adding it to your shell configuration file (`.bashrc` or `.zshrc`).
+-   **`command not found: telegram-cleanup`**: This can happen on Termux if the `pip` installation directory is not in your `PATH`.
+
+    **Fix 1 (Permanent):** Add the path to your shell configuration:
     ```bash
     echo 'export PATH="$PATH:$HOME/.local/bin"' >> ~/.bashrc
     source ~/.bashrc
     ```
+
+    **Fix 2 (Manual Run):** You can also run the bot directly using Python:
+    - For CLI: `python -m telegram_cleanup.telegram_cleanup`
+    - For Bot: `python -m telegram_cleanup.bot_interface`
 -   **Authentication Errors**: Double-check that your `API_ID`, `API_HASH`, and `PHONE` in the `.env` file are correct. If you're still having issues, you can delete the `telegram_cleanup.session` file and try again.
 
 You are now all set up!
