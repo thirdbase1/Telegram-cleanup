@@ -76,8 +76,11 @@ async def start_bot():
         if is_logged_in:
             buttons.append([Button.inline("🚀 Step 3: Start Cleanup", b"run_cleanup")])
 
-        if hasattr(event, 'edit'):
-            await event.edit(welcome_text, buttons=buttons)
+        if isinstance(event, events.CallbackQuery.Event):
+            try:
+                await event.edit(welcome_text, buttons=buttons)
+            except Exception:
+                await event.respond(welcome_text, buttons=buttons)
         else:
             await event.respond(welcome_text, buttons=buttons)
 
@@ -85,17 +88,23 @@ async def start_bot():
     async def handle_login_click(event):
         sender_id = event.sender_id
         user_states[sender_id] = 'WAITING_PHONE'
-        await event.edit("📱 Please enter your phone number in international format (e.g., `+1234567890`):")
+        try:
+            await event.edit("📱 Please enter your phone number in international format (e.g., `+1234567890`):")
+        except Exception:
+            await event.respond("📱 Please enter your phone number in international format (e.g., `+1234567890`):")
 
     @bot.on(events.CallbackQuery(data=b"set_whitelist"))
     async def handle_whitelist_click(event):
         sender_id = event.sender_id
         current = ", ".join(user_whitelists.get(sender_id, [])) or "None"
-        await event.edit(
+        text = (
             f"📝 **Current Whitelist:** {current}\n\n"
-            "Send me a comma-separated list of usernames (@name), links (t.me/name), or IDs to keep.",
-            buttons=[Button.inline("🔙 Back", b"back_to_start")]
+            "Send me a comma-separated list of usernames (@name), links (t.me/name), or IDs to keep."
         )
+        try:
+            await event.edit(text, buttons=[Button.inline("🔙 Back", b"back_to_start")])
+        except Exception:
+            await event.respond(text, buttons=[Button.inline("🔙 Back", b"back_to_start")])
         user_states[sender_id] = 'SETTING_WHITELIST'
 
     @bot.on(events.CallbackQuery(data=b"back_to_start"))
@@ -195,7 +204,11 @@ async def start_bot():
 
         cleaner = user_clients.get(sender_id)
         user_states[sender_id] = 'CLEANING'
-        await event.edit("⚡ **Cleanup in progress...**\nCheck messages below for live updates.")
+        text = "⚡ **Cleanup in progress...**\nCheck messages below for live updates."
+        try:
+            await event.edit(text)
+        except Exception:
+            await event.respond(text)
 
         whitelist = set(user_whitelists.get(sender_id, []))
 
@@ -235,10 +248,16 @@ async def start_bot():
         sender_id = event.sender_id
         cleaner = user_clients.pop(sender_id, None)
         if cleaner:
-            await cleaner.client.log_out()
-            await cleaner.disconnect()
+            try:
+                await cleaner.client.log_out()
+                await cleaner.disconnect()
+            except Exception:
+                pass
         user_states[sender_id] = 'IDLE'
-        await event.edit("👋 Logged out successfully.", buttons=[Button.inline("🔙 Menu", b"back_to_start")])
+        try:
+            await event.edit("👋 Logged out successfully.", buttons=[Button.inline("🔙 Menu", b"back_to_start")])
+        except Exception:
+            await event.respond("👋 Logged out successfully.", buttons=[Button.inline("🔙 Menu", b"back_to_start")])
 
     await bot.run_until_disconnected()
 
