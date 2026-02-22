@@ -4,6 +4,15 @@ This Python script (`telegram-cleanup`) automates the process of cleaning up a T
 
 For detailed installation instructions, see [INSTALL.md](INSTALL.md).
 
+## ☁️ Deployment (Pxxl.dev / Heroku / Fly.io)
+
+This bot is ready for cloud deployment using the provided `main.py` and `requirements.txt`.
+- **Entry File**: `main.py`
+- **Application Server**: Gunicorn (WSGI) or any Python runner.
+- **Port**: 8000 (standard).
+- **Environment Variables**: Ensure `API_ID`, `API_HASH`, and `BOT_TOKEN` are configured in your platform settings.
+- **Workers**: If using Gunicorn, set workers to `1` to prevent duplicate bot instances.
+
 ## Purpose
 
 The script helps you reset your Telegram account to a clean state by:

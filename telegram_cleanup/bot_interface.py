@@ -11,6 +11,7 @@ user_states = {}
 user_clients = {} # Store TelegramCleaner instances per user
 user_whitelists = {}
 active_tasks = {}
+last_messages = {} # Track last bot message to keep chat clean
 
 def main():
     """Entry point for the bot."""
@@ -55,6 +56,12 @@ async def start_bot():
     except Exception as e:
         print(f"❌ Login error: {e}")
         return
+
+    async def cleanup_old_message(sender_id):
+        """Deletes the last bot message to prevent clutter."""
+        if sender_id in last_messages:
+            try: await bot.delete_messages(sender_id, last_messages[sender_id])
+            except: pass
 
     @bot.on(events.NewMessage(pattern='/start'))
     async def handle_start(event):
@@ -102,11 +109,16 @@ async def start_bot():
 
         if isinstance(event, events.CallbackQuery.Event):
             try:
-                await event.edit(welcome_text, buttons=buttons)
-            except Exception:
-                await event.respond(welcome_text, buttons=buttons)
+                msg = await event.edit(welcome_text, buttons=buttons)
+                last_messages[sender_id] = msg.id
+            except:
+                await cleanup_old_message(sender_id)
+                msg = await event.respond(welcome_text, buttons=buttons)
+                last_messages[sender_id] = msg.id
         else:
-            await event.respond(welcome_text, buttons=buttons)
+            await cleanup_old_message(sender_id)
+            msg = await event.respond(welcome_text, buttons=buttons)
+            last_messages[sender_id] = msg.id
 
     @bot.on(events.CallbackQuery(data=b"already_logged_in"))
     async def handle_already_logged_in(event):
@@ -124,27 +136,43 @@ async def start_bot():
         text = "📱 Please enter your phone number in international format (e.g., `+1234567890`):"
         buttons = [[Button.inline("🔙 Back", b"back_to_start")]]
         try:
-            await event.edit(text, buttons=buttons)
-        except Exception:
-            await event.respond(text, buttons=buttons)
+            msg = await event.edit(text, buttons=buttons)
+            last_messages[sender_id] = msg.id
+        except:
+            await cleanup_old_message(sender_id)
+            msg = await event.respond(text, buttons=buttons)
+            last_messages[sender_id] = msg.id
 
     @bot.on(events.CallbackQuery(data=b"set_whitelist"))
     async def handle_whitelist_click(event):
-        # Answer instantly
-        try: await event.answer()
-        except: pass
-
+        await event.answer()
         sender_id = event.sender_id
+
+        if user_states.get(sender_id) == 'CLEANING':
+            await event.respond("⚠️ Cannot update whitelist while cleanup is running!", buttons=[Button.inline("🔙 Back", b"back_to_start")])
+            return
+
+        # Sync with persistent data
+        cleaner = user_clients.get(sender_id)
+        if cleaner:
+            cleaner._load_data()
+            items = cleaner.prefs.get("kept_items", [])
+            user_whitelists[sender_id] = list(set(user_whitelists.get(sender_id, []) + items))
+
         current = ", ".join(user_whitelists.get(sender_id, [])) or "None"
         text = (
-            f"📝 **Current Whitelist:** {current}\n\n"
-            "Send me a comma-separated list of usernames (@name), links (t.me/name), or IDs to keep."
+            f"📝 **Current Whitelist:** `{current}`\n\n"
+            "Send me usernames (@name), links, or IDs to keep.\n"
+            "💡 Items you send will be ADDED to the current list."
         )
         buttons = [[Button.inline("🔙 Back", b"back_to_start")]]
         try:
-            await event.edit(text, buttons=buttons)
-        except Exception:
-            await event.respond(text, buttons=buttons)
+            msg = await event.edit(text, buttons=buttons)
+            last_messages[sender_id] = msg.id
+        except:
+            await cleanup_old_message(sender_id)
+            msg = await event.respond(text, buttons=buttons)
+            last_messages[sender_id] = msg.id
         user_states[sender_id] = 'SETTING_WHITELIST'
 
     @bot.on(events.CallbackQuery(data=b"back_to_start"))
@@ -172,7 +200,9 @@ async def start_bot():
                 try: await old_cleaner.client.disconnect()
                 except: pass
 
-            await event.respond("⏳ Sending login code...")
+            await cleanup_old_message(sender_id)
+            msg = await event.respond("⏳ Sending login code...")
+            last_messages[sender_id] = msg.id
             session_name = f"user_{sender_id}"
 
             # Use bot's own API credentials for the user client
@@ -220,16 +250,22 @@ async def start_bot():
                 # Clean the code: remove 'code:', spaces, and other non-digit chars
                 clean_code = re.sub(r'\D', '', text)
                 if not clean_code or len(clean_code) < 5:
-                    await event.respond("❌ Invalid format. Please send like: `code: 1 2 3 4 5`")
+                    await cleanup_old_message(sender_id)
+                    msg = await event.respond("❌ Invalid format. Please send like: `code: 1 2 3 4 5`")
+                    last_messages[sender_id] = msg.id
                     return
 
                 await cleaner.client.sign_in(cleaner.phone, clean_code, phone_code_hash=cleaner.phone_code_hash)
                 await finish_login(event, sender_id)
             except errors.SessionPasswordNeededError:
                 user_states[sender_id] = 'WAITING_2FA'
-                await event.respond("🔑 2FA detected. Please enter your Cloud Password:")
+                await cleanup_old_message(sender_id)
+                msg = await event.respond("🔑 2FA detected. Please enter your Cloud Password:")
+                last_messages[sender_id] = msg.id
             except Exception as e:
-                await event.respond(f"❌ Error: {str(e)}")
+                await cleanup_old_message(sender_id)
+                msg = await event.respond(f"❌ Error: {str(e)}")
+                last_messages[sender_id] = msg.id
 
         elif state == 'WAITING_2FA':
             cleaner = user_clients.get(sender_id)
@@ -237,25 +273,45 @@ async def start_bot():
                 await cleaner.client.sign_in(password=text)
                 await finish_login(event, sender_id)
             except Exception as e:
-                await event.respond(f"❌ Incorrect password: {str(e)}")
+                await cleanup_old_message(sender_id)
+                msg = await event.respond(f"❌ Incorrect password: {str(e)}")
+                last_messages[sender_id] = msg.id
 
         elif state == 'SETTING_WHITELIST':
-            items = [i.strip() for i in text.split(',') if i.strip()]
-            user_whitelists[sender_id] = items
+            # Clean user input: remove parentheses etc
+            raw_items = text.replace('(', '').replace(')', '').split(',')
+            new_items = [i.strip() for i in raw_items if i.strip()]
+
+            existing = user_whitelists.get(sender_id, [])
+            updated = list(set(existing + new_items))
+            user_whitelists[sender_id] = updated
+
+            # Persist if logged in
+            cleaner = user_clients.get(sender_id)
+            if cleaner:
+                cleaner.prefs["kept_items"] = updated
+                cleaner._save_data()
+
             user_states[sender_id] = 'IDLE'
-            await event.respond(f"✅ Whitelist updated with {len(items)} items!", buttons=[
+            await cleanup_old_message(sender_id)
+            msg = await event.respond(f"✅ Whitelist updated! Total items: {len(updated)}", buttons=[
                 [Button.inline("🔙 Back to Menu", b"back_to_start")]
             ])
+            last_messages[sender_id] = msg.id
 
     async def finish_login(event, sender_id):
         user_states[sender_id] = 'READY'
-        await event.respond(
+        await cleanup_old_message(sender_id)
+        msg = await bot.send_message(
+            sender_id,
             "✅ **Successfully logged in!**\n\nReady to clean up your account?",
             buttons=[
                 [Button.inline("🚀 Start Cleanup", b"run_cleanup")],
-                [Button.inline("🚪 Logout", b"logout")]
+                [Button.inline("📜 Whitelist", b"set_whitelist")],
+                [Button.inline("🚪 Logout & Wipe", b"logout")]
             ]
         )
+        last_messages[sender_id] = msg.id
 
     @bot.on(events.CallbackQuery(data=b"run_cleanup"))
     async def handle_run_cleanup(event):
