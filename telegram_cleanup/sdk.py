@@ -174,9 +174,10 @@ class TelegramCleaner:
                 print(f"🚪 Left {'channel' if log_key == 'channels_left' else 'group'}: {name}")
             elif isinstance(entity, User):
                 if entity.bot:
+                    await self.client(BlockRequest(entity.id))
                     await self.client.delete_dialog(entity, revoke=True)
                     self.logs["bots_blocked_deleted"] += 1
-                    print(f"🗑️  Deleted bot: {name}")
+                    print(f"⛔ Blocked and deleted bot: {name}")
                 else:
                     await self.client.delete_dialog(entity, revoke=True)
                     self.logs["private_chats_blocked_deleted"] += 1
@@ -352,7 +353,7 @@ class TelegramCleaner:
         print("\n🏆 [MISSION COMPLETE] Final Cleanup Summary:")
         print(f"  🚪 Channels Left: {self.logs['channels_left']}")
         print(f"  🚪 Groups Left: {self.logs['groups_left']}")
-        print(f"  🗑️  Bots Deleted: {self.logs['bots_blocked_deleted']}")
+        print(f"  ⛔ Bots Blocked & Deleted: {self.logs['bots_blocked_deleted']}")
         print(f"  🗑️  Private Chats Deleted: {self.logs['private_chats_blocked_deleted']}")
         print(f"  💎 User Items Preserved: {len(user_skipped)}")
         print(f"  🛡️  System Items Preserved: {len(self.logs['skipped_items']) - len(user_skipped)}")
