@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import random
 import sys
 import tempfile
 from datetime import datetime
@@ -15,7 +16,7 @@ from telethon.tl.functions.contacts import BlockRequest
 SESSION_NAME = "telegram_cleanup"
 PREF_FILE = "telegram_prefs.json"
 PROGRESS_FILE = "cleanup_progress.json"
-CONCURRENCY_LIMIT = 5
+CONCURRENCY_LIMIT = 2
 
 # --- Utility: Atomic File Writing ---
 def _atomic_write(filename, data):
@@ -164,7 +165,8 @@ class TelegramCleaner:
             return True
 
         print(f"🔍 [SCANNING] {name}...")
-        await asyncio.sleep(0.4) # Slightly more delay for better observation
+        # Observation delay + random jitter
+        await asyncio.sleep(0.5 + random.random() * 0.5)
 
         try:
             if isinstance(entity, Channel):
@@ -175,6 +177,8 @@ class TelegramCleaner:
             elif isinstance(entity, User):
                 if entity.bot:
                     await self.client(BlockRequest(entity.id))
+                    # Small gap between block and delete
+                    await asyncio.sleep(0.5 + random.random() * 0.5)
                     await self.client.delete_dialog(entity, revoke=True)
                     self.logs["bots_blocked_deleted"] += 1
                     print(f"⛔ Blocked and deleted bot: {name}")
@@ -187,16 +191,19 @@ class TelegramCleaner:
                 self.logs["errors"].append(f"Unknown entity: {name}")
 
             self.progress["processed_ids"].append(entity.id)
-            await asyncio.sleep(0.1) # Reduced delay due to semaphore
+            # 300% Optimization: Significant delay after each destructive action
+            # This makes the bot much more resilient to Telegram's "burst" detection
+            await asyncio.sleep(1.5 + random.random() * 1.5)
             return True
         except errors.FloodWaitError as e:
-            wait_time = min(e.seconds, 300)
-            if retry_count < 5:
-                print(f"⏳ Rate limit hit for {name}, waiting {wait_time} seconds (Retry {retry_count+1})")
+            # Exponential backoff + fixed wait
+            wait_time = e.seconds + (retry_count * 10) + 5
+            if retry_count < 7:
+                print(f"⏳ [RATE LIMIT] Hit for {name}, waiting {wait_time} seconds (Attempt {retry_count+1}/7)")
                 await asyncio.sleep(wait_time)
-                return await self._process_dialog_internal(entity, retry_count + 1)
+                return await self._process_dialog_internal(entity, retry_count + 1, ignore_processed=ignore_processed)
             else:
-                print(f"❌ Max retries reached for {name} due to rate limits.")
+                print(f"❌ [FAILED] Max retries reached for {name} due to rate limits.")
                 return False
         except Exception as e:
             print(f"⚠️ Error processing {name}: {str(e)}")
@@ -247,6 +254,21 @@ class TelegramCleaner:
 
         self.prefs["kept_items"] = sorted(list(combined_items))
 
+    async def _safe_iter_dialogs(self):
+        """Iterates through dialogs with rate limit protection."""
+        dialogs = []
+        try:
+            async for dialog in self.client.iter_dialogs(limit=None):
+                dialogs.append(dialog)
+                # Small jittered sleep during iteration to avoid flooding on large accounts
+                if len(dialogs) % 20 == 0:
+                    await asyncio.sleep(0.5 + random.random() * 0.5)
+            return dialogs
+        except errors.FloodWaitError as e:
+            print(f"⏳ Rate limit hit fetching chats, waiting {e.seconds + 5} seconds...")
+            await asyncio.sleep(e.seconds + 5)
+            return await self._safe_iter_dialogs()
+
     async def run_cleanup(self, user_kept_items):
         """
         Runs the main cleanup process.
@@ -257,13 +279,18 @@ class TelegramCleaner:
 
         print("\n🚀 [INITIATING] Starting intelligent cleanup sequence...")
         # Always whitelist self (Saved Messages)
-        me = await self.client.get_me()
-        if me:
-            self.whitelist_ids.add(me.id)
-            self.system_whitelist_ids.add(me.id)
-            if me.username:
-                self.whitelist_usernames.add(me.username.lower())
-            print(f"🛡️  [SECURE] Automatically whitelisted your account (Saved Messages)")
+        try:
+            me = await self.client.get_me()
+            if me:
+                self.whitelist_ids.add(me.id)
+                self.system_whitelist_ids.add(me.id)
+                if me.username:
+                    self.whitelist_usernames.add(me.username.lower())
+                print(f"🛡️  [SECURE] Automatically whitelisted your account (Saved Messages)")
+        except errors.FloodWaitError as e:
+            print(f"⏳ Rate limit hit checking identity, waiting {e.seconds + 5}s...")
+            await asyncio.sleep(e.seconds + 5)
+            return await self.run_cleanup(user_kept_items)
 
         # Always whitelist Telegram service notifications
         self.whitelist_ids.add(777000)
@@ -274,9 +301,10 @@ class TelegramCleaner:
 
         # --- Fetch Dialogs and Update Whitelist Counts ---
         print("\n📊 [ANALYZING] Scanning your Telegram account to categorize items...")
-        dialogs = []
+        dialogs = await self._safe_iter_dialogs()
+
         try:
-            async for dialog in self.client.iter_dialogs(limit=None):
+            for dialog in dialogs:
                 entity = dialog.entity
                 if self._is_whitelisted(entity):
                     if isinstance(entity, Channel):
@@ -289,7 +317,6 @@ class TelegramCleaner:
                             self.whitelist_counts["bots"] += 1
                         else:
                             self.whitelist_counts["users"] += 1
-                dialogs.append(dialog)
 
             print(f"\n📈 [REPORT] Scan Complete:")
             print(f"  - Total Chats Found: {len(dialogs)}")
@@ -308,24 +335,29 @@ class TelegramCleaner:
         await asyncio.sleep(20)
 
         # --- Process in Batches ---
-        batch_size = 50 # Increased batch size since we have a semaphore and better rate limit handling
+        batch_size = 20 # Reduced batch size for more frequent progress saving and cooldowns
         for i in range(0, len(dialogs), batch_size):
             batch = dialogs[i:i + batch_size]
             print(f"📦 Processing batch {i//batch_size + 1}/{ (len(dialogs)-1)//batch_size + 1}")
             tasks = [self._process_dialog(d.entity) for d in batch if d.entity]
             await asyncio.gather(*tasks)
             _atomic_write(PROGRESS_FILE, self.progress) # Save progress between batches
-            await asyncio.sleep(2) # Small break between batches
+
+            # Longer break between batches with jitter
+            batch_cooldown = 5 + random.random() * 5
+            print(f"💤 Batch complete. Cooling down for {batch_cooldown:.1f}s...")
+            await asyncio.sleep(batch_cooldown)
 
         # --- Verification Passes ---
         for pass_num in range(3):
-            # Refresh the internal dialog cache
-            await self.client.get_dialogs(limit=None)
+            # Refresh the internal dialog cache with safety
+            try:
+                await self.client.get_dialogs(limit=None)
+            except errors.FloodWaitError as e:
+                await asyncio.sleep(e.seconds + 5)
 
-            remaining_dialogs = []
-            async for d in self.client.iter_dialogs(limit=None):
-                if not self._is_whitelisted(d.entity):
-                    remaining_dialogs.append(d)
+            all_dialogs = await self._safe_iter_dialogs()
+            remaining_dialogs = [d for d in all_dialogs if not self._is_whitelisted(d.entity)]
 
             if not remaining_dialogs:
                 print(f"✅ Verification Pass {pass_num + 1}: Telegram account is clean (excluding whitelisted).")
@@ -343,7 +375,7 @@ class TelegramCleaner:
             await asyncio.sleep(5)
 
         # --- Final Summary ---
-        final_dialogs = [d async for d in self.client.iter_dialogs(limit=None)]
+        final_dialogs = await self._safe_iter_dialogs()
         self.logs["remaining_chats"] = len(final_dialogs)
 
         # Calculate user whitelisted items only for the summary report
