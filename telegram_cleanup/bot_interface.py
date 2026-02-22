@@ -16,36 +16,70 @@ def main():
     asyncio.run(start_bot())
 
 async def start_bot():
-    config = load_config()
+    try:
+        config = load_config()
+    except Exception as e:
+        print(f"❌ Configuration error: {e}")
+        return
+
     token = config.get('bot_token')
     if not token:
         print("❌ Error: BOT_TOKEN not found in .env file.")
         return
 
+    print("🛰️ Connecting to Telegram...")
     bot = TelegramClient('bot_session', config['api_id'], config['api_hash'])
-    await bot.start(bot_token=token)
+
+    try:
+        await bot.start(bot_token=token)
+    except errors.rpcerrorlist.ApiIdInvalidError:
+        print("❌ FATAL ERROR: Your API_ID or API_HASH is invalid.")
+        print("💡 Please check your credentials at https://my.telegram.org")
+        return
+    except Exception as e:
+        print(f"❌ Login error: {e}")
+        return
     print("🤖 Bot is up and running!")
 
     @bot.on(events.NewMessage(pattern='/start'))
     async def handle_start(event):
         sender_id = event.sender_id
         user_states[sender_id] = 'IDLE'
+        await send_main_menu(event)
+
+    async def send_main_menu(event):
+        sender_id = event.sender_id
         welcome_text = (
-            "👋 **Welcome to Telegram Cleanup Bot!**\n\n"
-            "I can help you reset your account by removing unwanted channels, groups, and bots while keeping what's important.\n\n"
-            "💡 **Examples of what you can keep:**\n"
-            "• `James bot, @Michael, t.me/BrainsSignals` (Comma separated)\n"
-            "• `1685547486` (Numeric IDs are also supported)\n\n"
-            "🚀 **Getting Started:**\n"
-            "1. Click **🔑 Login** to link your account.\n"
-            "2. Click **📜 Set Whitelist** to choose what NOT to delete.\n"
-            "3. Click **🚀 Start Cleanup** when ready.\n\n"
-            "🛡️ **Security:** Your session is private and encrypted."
+            "🚀 **The Ultimate Telegram Cleanup Bot**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "I will reset your account to a clean state by removing unwanted chats, "
+            "blocking bots, and leaving channels/groups.\n\n"
+            "💡 **Whitelist Examples (Keep these!):**\n"
+            "• `James bot, @Michael, t.me/MyChannel` (Names/Links)\n"
+            "• `1685547486` (Numeric IDs)\n\n"
+            "🛡️ **Safe & Secure:** We auto-keep your 'Saved Messages'.\n"
+            "━━━━━━━━━━━━━━━━━━━━"
         )
-        await event.respond(welcome_text, buttons=[
-            [Button.inline("🔑 Login to Telegram", b"login")],
-            [Button.inline("📜 Set Whitelist", b"set_whitelist")]
-        ])
+
+        # Check if user is already logged in
+        cleaner = user_clients.get(sender_id)
+        is_logged_in = cleaner and await cleaner.client.is_user_authorized()
+
+        buttons = []
+        if not is_logged_in:
+            buttons.append([Button.inline("🔑 Step 1: Login", b"login")])
+        else:
+            buttons.append([Button.inline("✅ Logged In (Logout)", b"logout")])
+
+        buttons.append([Button.inline("📜 Step 2: Set Whitelist", b"set_whitelist")])
+
+        if is_logged_in:
+            buttons.append([Button.inline("🚀 Step 3: Start Cleanup", b"run_cleanup")])
+
+        if hasattr(event, 'edit'):
+            await event.edit(welcome_text, buttons=buttons)
+        else:
+            await event.respond(welcome_text, buttons=buttons)
 
     @bot.on(events.CallbackQuery(data=b"login"))
     async def handle_login_click(event):
@@ -66,7 +100,7 @@ async def start_bot():
 
     @bot.on(events.CallbackQuery(data=b"back_to_start"))
     async def handle_back(event):
-        await handle_start(event)
+        await send_main_menu(event)
 
     @bot.on(events.NewMessage())
     async def handle_all_messages(event):
@@ -173,12 +207,26 @@ async def start_bot():
 
     async def run_cleanup_task(sender_id, cleaner, whitelist):
         try:
+            # Dashboard message
+            dashboard = await bot.send_message(sender_id, "⚙️ **Preparing Intelligent Cleanup...**")
+
+            async def bot_progress_callback(msg):
+                try:
+                    await dashboard.edit(f"🛰️ **Cleanup Dashboard**\n━━━━━━━━━━━━━━━━━━━━\n{msg}")
+                except Exception:
+                    # Message might be same or edited too fast
+                    pass
+
+            cleaner.progress_callback = bot_progress_callback
             await cleaner.run_cleanup(whitelist)
-            await bot.send_message(sender_id, "🏁 **Cleanup Finished!**", buttons=[
-                [Button.inline("🔙 Menu", b"back_to_start")]
+
+            await bot.send_message(sender_id, "🏁 **Cleanup Mission Complete!**\n\nYour account is now clean.", buttons=[
+                [Button.inline("🔙 Return to Menu", b"back_to_start")]
             ])
         except Exception as e:
-            await bot.send_message(sender_id, f"⚠️ Cleanup interrupted: {str(e)}")
+            await bot.send_message(sender_id, f"⚠️ **Cleanup Interrupted:**\n`{str(e)}`", buttons=[
+                [Button.inline("🔙 Back", b"back_to_start")]
+            ])
         finally:
             user_states[sender_id] = 'READY'
 
