@@ -22,14 +22,14 @@ telegram-cleanup
 
 ## SDK Usage
 
-This project also includes an SDK for programmatic use. You can import the `TelegramCleaner` class from `src.sdk` to integrate the cleanup functionality into your own scripts.
+This project also includes an SDK for programmatic use. You can import the `TelegramCleaner` class from `telegram_cleanup.sdk` to integrate the cleanup functionality into your own scripts.
 
 ### Example:
 
 ```python
 import asyncio
-from src.config import load_config
-from src.sdk import TelegramCleaner
+from telegram_cleanup.config import load_config
+from telegram_cleanup.sdk import TelegramCleaner
 
 async def main():
     config = load_config()
@@ -48,9 +48,9 @@ if __name__ == "__main__":
 
 ## Files
 
-- `src/telegram_cleanup.py`: The command-line entry point.
-- `src/sdk.py`: The core SDK with the `TelegramCleaner` class.
-- `src/config.py`: Configuration loader.
+- `telegram_cleanup/telegram_cleanup.py`: The command-line entry point.
+- `telegram_cleanup/sdk.py`: The core SDK with the `TelegramCleaner` class.
+- `telegram_cleanup/config.py`: Configuration loader.
 - `setup.py`: Installation script.
 - `INSTALL.md`: Detailed installation guide.
 - `.ENV.example`: Template for `.env`.
