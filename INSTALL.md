@@ -99,22 +99,23 @@ pip install .
 
 ## Step 5: Run the Script
 
-### Option A: Terminal Mode
-Run the cleanup process with a single command:
-```bash
-python cleanup.py
-```
-*(Or use `telegram-cleanup` if installed via pip)*
+The simplest way to run the bot is using the `run.py` script:
 
-### Option B: Public Bot Mode (Advanced)
-If you want to run the cleanup through a Telegram Bot interface:
-1. Create a bot via [@BotFather](https://t.me/BotFather) and get the token.
-2. Add `BOT_TOKEN` to your `.env` file.
-3. Run:
-   ```bash
-   python bot.py
-   ```
-*(Or use `telegram-cleanup-bot` if installed via pip)*
+```bash
+python run.py
+```
+
+This will give you a menu with two options:
+
+### 1. Terminal Mode (Standard Cleanup)
+-   Choose **Option 1**.
+-   This runs the cleanup directly in your terminal.
+-   Great for personal use.
+
+### 2. Public Bot Mode (Advanced)
+-   Choose **Option 2**.
+-   Requires a `BOT_TOKEN` in your `.env` file.
+-   Allows you to use a Telegram chat with inline buttons to control the cleanup.
 
 The first time you run it, you will be prompted for:
 1.  **A login code**: Sent to your Telegram account.
@@ -127,17 +128,12 @@ The script will then begin the cleanup process. It will keep you updated on its 
 
 ## Troubleshooting
 
--   **`command not found: telegram-cleanup`**: This can happen on Termux if the `pip` installation directory is not in your `PATH`.
+-   **`command not found: telegram-cleanup`**: If you prefer not to use `pip install`, just use the manual run method.
 
-    **Fix 1 (Permanent):** Add the path to your shell configuration:
+    **Manual Run (Recommended):**
     ```bash
-    echo 'export PATH="$PATH:$HOME/.local/bin"' >> ~/.bashrc
-    source ~/.bashrc
+    python run.py
     ```
-
-    **Fix 2 (Manual Run):** Use the provided wrapper scripts in the main folder:
-    - For CLI: `python cleanup.py`
-    - For Bot: `python bot.py`
 -   **Authentication Errors**: Double-check that your `API_ID`, `API_HASH`, and `PHONE` in the `.env` file are correct. If you're still having issues, you can delete the `telegram_cleanup.session` file and try again.
 
 You are now all set up!

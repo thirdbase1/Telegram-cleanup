@@ -14,20 +14,15 @@ The script helps you reset your Telegram account to a clean state by:
 
 ## Running the Script
 
-You can run the cleanup process in two modes:
+To start the bot, simply run the following command in your terminal:
 
-### 1. Terminal Mode (CLI)
-Run the script directly in your terminal:
 ```bash
-telegram-cleanup
+python run.py
 ```
 
-### 2. Public Bot Mode
-If you have a `BOT_TOKEN`, you can start the bot interface:
-```bash
-telegram-cleanup-bot
-```
-This allows you and others to perform cleanup via a Telegram chat with inline buttons.
+This will open a menu where you can choose between:
+1.  **Terminal Mode (Standard Cleanup)**
+2.  **Telegram Bot Mode (Public Interface)**
 
 ## SDK Usage
 
