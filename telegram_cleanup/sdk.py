@@ -43,6 +43,7 @@ class TelegramCleaner:
         self.prefs = {"kept_items": []}
         self.progress = {"processed_ids": []}
         self.whitelist_ids = set()
+        self.system_whitelist_ids = set()
         self.whitelist_usernames = set()
         self.whitelist_titles = set()
         self.whitelist_counts = {"channels": 0, "groups": 0, "bots": 0, "users": 0}
@@ -143,16 +144,16 @@ class TelegramCleaner:
 
         return is_kept
 
-    async def _process_dialog(self, entity):
+    async def _process_dialog(self, entity, ignore_processed=False):
         """Processes a single dialog entity with concurrency control."""
         async with self.semaphore:
-            return await self._process_dialog_internal(entity)
+            return await self._process_dialog_internal(entity, ignore_processed=ignore_processed)
 
-    async def _process_dialog_internal(self, entity, retry_count=0):
+    async def _process_dialog_internal(self, entity, retry_count=0, ignore_processed=False):
         """Internal logic for processing a single dialog entity."""
         name = entity.title if hasattr(entity, 'title') else (getattr(entity, 'username', None) or f"ID: {entity.id}")
 
-        if entity.id in self.progress["processed_ids"]:
+        if not ignore_processed and entity.id in self.progress["processed_ids"]:
             return True
 
         if self._is_whitelisted(entity):
@@ -174,14 +175,13 @@ class TelegramCleaner:
             elif isinstance(entity, User):
                 if entity.bot:
                     await self.client(BlockRequest(entity.id))
-                    await self.client.delete_dialog(entity)
+                    await self.client.delete_dialog(entity, revoke=True)
                     self.logs["bots_blocked_deleted"] += 1
                     print(f"⛔ Blocked and deleted bot: {name}")
                 else:
-                    await self.client(BlockRequest(entity.id))
-                    await self.client.delete_dialog(entity)
+                    await self.client.delete_dialog(entity, revoke=True)
                     self.logs["private_chats_blocked_deleted"] += 1
-                    print(f"⛔ Blocked and deleted private chat: {name}")
+                    print(f"🗑️  Deleted private chat: {name}")
             else:
                 print(f"⚠️ Skipping unknown entity: {name}")
                 self.logs["errors"].append(f"Unknown entity: {name}")
@@ -260,12 +260,14 @@ class TelegramCleaner:
         me = await self.client.get_me()
         if me:
             self.whitelist_ids.add(me.id)
+            self.system_whitelist_ids.add(me.id)
             if me.username:
                 self.whitelist_usernames.add(me.username.lower())
             print(f"🛡️  [SECURE] Automatically whitelisted your account (Saved Messages)")
 
         # Always whitelist Telegram service notifications
         self.whitelist_ids.add(777000)
+        self.system_whitelist_ids.add(777000)
 
         await self._prepare_whitelist(user_kept_items)
         self._save_data() # Persist the updated whitelist immediately
@@ -294,7 +296,7 @@ class TelegramCleaner:
             print(f"  - Whitelisted Channels: {self.whitelist_counts['channels']}")
             print(f"  - Whitelisted Groups: {self.whitelist_counts['groups']}")
             print(f"  - Whitelisted Bots: {self.whitelist_counts['bots']}")
-            print(f"  - Whitelisted Private Users: {self.whitelist_counts['users']}")
+            print(f"  - Whitelisted Private Users: {self.whitelist_counts['users']} (incl. your account)")
 
         except Exception as e:
             print(f"❌ Error fetching chats: {str(e)}")
@@ -317,6 +319,9 @@ class TelegramCleaner:
 
         # --- Verification Passes ---
         for pass_num in range(3):
+            # Refresh the internal dialog cache
+            await self.client.get_dialogs(limit=None)
+
             remaining_dialogs = []
             async for d in self.client.iter_dialogs(limit=None):
                 if not self._is_whitelisted(d.entity):
@@ -326,8 +331,13 @@ class TelegramCleaner:
                 print(f"✅ Verification Pass {pass_num + 1}: Telegram account is clean (excluding whitelisted).")
                 break
 
-            print(f"⚠️ Verification Pass {pass_num + 1}: {len(remaining_dialogs)} non-whitelisted chats remain, retrying...")
-            tasks = [self._process_dialog(d.entity) for d in remaining_dialogs if d.entity]
+            print(f"⚠️ Verification Pass {pass_num + 1}: {len(remaining_dialogs)} non-whitelisted chats remain.")
+            for d in remaining_dialogs:
+                name = d.name if d.name else (getattr(d.entity, 'title', None) or getattr(d.entity, 'username', None) or f"ID: {d.id}")
+                print(f"  🚩 Remaining: {name}")
+
+            print(f"🔄 Retrying cleanup for remaining chats...")
+            tasks = [self._process_dialog(d.entity, ignore_processed=True) for d in remaining_dialogs if d.entity]
             await asyncio.gather(*tasks)
             _atomic_write(PROGRESS_FILE, self.progress)
             await asyncio.sleep(5)
@@ -335,12 +345,18 @@ class TelegramCleaner:
         # --- Final Summary ---
         final_dialogs = [d async for d in self.client.iter_dialogs(limit=None)]
         self.logs["remaining_chats"] = len(final_dialogs)
+
+        # Calculate user whitelisted items only for the summary report
+        user_skipped = [name for name in self.logs["skipped_items"]
+                       if name not in ["Saved Messages", "Telegram"] and "ID: 777000" not in name]
+
         print("\n🏆 [MISSION COMPLETE] Final Cleanup Summary:")
         print(f"  🚪 Channels Left: {self.logs['channels_left']}")
         print(f"  🚪 Groups Left: {self.logs['groups_left']}")
-        print(f"  ⛔ Bots Blocked/Deleted: {self.logs['bots_blocked_deleted']}")
-        print(f"  ⛔ Private Chats Blocked/Deleted: {self.logs['private_chats_blocked_deleted']}")
-        print(f"  💎 Items Preserved (Whitelisted): {len(self.logs['skipped_items'])}")
+        print(f"  ⛔ Bots Blocked & Deleted: {self.logs['bots_blocked_deleted']}")
+        print(f"  🗑️  Private Chats Deleted: {self.logs['private_chats_blocked_deleted']}")
+        print(f"  💎 User Items Preserved: {len(user_skipped)}")
+        print(f"  🛡️  System Items Preserved: {len(self.logs['skipped_items']) - len(user_skipped)}")
         print(f"  ⚠️ Errors: {len(self.logs['errors'])}")
         print(f"  📊 Remaining Chats: {self.logs['remaining_chats']}")
 
@@ -348,7 +364,10 @@ class TelegramCleaner:
 
 async def main():
     """Example usage of the TelegramCleaner SDK."""
-    from config import load_config
+    try:
+        from .config import load_config
+    except ImportError:
+        from config import load_config
     config = load_config()
 
     cleaner = TelegramCleaner(config)
