@@ -12,6 +12,7 @@ setup(
     entry_points={
         "console_scripts": [
             "telegram-cleanup = telegram_cleanup.telegram_cleanup:main_cli",
+            "telegram-cleanup-bot = telegram_cleanup.bot_interface:main",
         ],
     },
 )
