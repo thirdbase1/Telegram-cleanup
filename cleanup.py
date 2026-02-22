@@ -1,7 +1,7 @@
 import asyncio
 import sys
-from src.config import load_config
-from src.sdk import TelegramCleaner
+from telegram_cleanup.config import load_config
+from telegram_cleanup.sdk import TelegramCleaner
 
 async def main():
     config = load_config()
