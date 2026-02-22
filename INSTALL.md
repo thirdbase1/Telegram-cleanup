@@ -102,8 +102,9 @@ pip install .
 ### Option A: Terminal Mode
 Run the cleanup process with a single command:
 ```bash
-telegram-cleanup
+python cleanup.py
 ```
+*(Or use `telegram-cleanup` if installed via pip)*
 
 ### Option B: Public Bot Mode (Advanced)
 If you want to run the cleanup through a Telegram Bot interface:
@@ -111,8 +112,9 @@ If you want to run the cleanup through a Telegram Bot interface:
 2. Add `BOT_TOKEN` to your `.env` file.
 3. Run:
    ```bash
-   telegram-cleanup-bot
+   python bot.py
    ```
+*(Or use `telegram-cleanup-bot` if installed via pip)*
 
 The first time you run it, you will be prompted for:
 1.  **A login code**: Sent to your Telegram account.
@@ -133,9 +135,9 @@ The script will then begin the cleanup process. It will keep you updated on its 
     source ~/.bashrc
     ```
 
-    **Fix 2 (Manual Run):** You can also run the bot directly using Python:
-    - For CLI: `python -m telegram_cleanup.telegram_cleanup`
-    - For Bot: `python -m telegram_cleanup.bot_interface`
+    **Fix 2 (Manual Run):** Use the provided wrapper scripts in the main folder:
+    - For CLI: `python cleanup.py`
+    - For Bot: `python bot.py`
 -   **Authentication Errors**: Double-check that your `API_ID`, `API_HASH`, and `PHONE` in the `.env` file are correct. If you're still having issues, you can delete the `telegram_cleanup.session` file and try again.
 
 You are now all set up!
