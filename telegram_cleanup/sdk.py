@@ -203,9 +203,9 @@ class TelegramCleaner:
             return True
 
         if self._is_whitelisted(entity):
-            await self.log_and_report(f"💎 [WHITELISTED] {name}")
             if name not in self.logs["skipped_items"]:
                 self.logs["skipped_items"].append(name)
+                await self.log_and_report(f"💎 [WHITELISTED] {name}")
             self.progress["processed_ids"].append(entity.id)
             return True
 
@@ -270,12 +270,11 @@ class TelegramCleaner:
                 continue
 
             # If it looks like a username or link
-            if item.startswith("@") or item.startswith("https://t.me/") or item.startswith("t.me/"):
+            if item.startswith("@") or 't.me/' in item:
                 clean_item = item
-                if item.startswith("https://t.me/"):
-                    clean_item = "@" + item[13:]
-                elif item.startswith("t.me/"):
-                    clean_item = "@" + item[5:]
+                if 't.me/' in item:
+                    username = item.split('t.me/')[-1].split('/')[0].split('?')[0]
+                    clean_item = "@" + username
 
                 try:
                     entity = await self.client.get_entity(clean_item)
@@ -318,6 +317,10 @@ class TelegramCleaner:
         self._load_data()
 
         await self.log_and_report("\n🚀 [INITIATING] Starting intelligent cleanup sequence...")
+
+        # CLEAR OLD COUNTS FOR FRESH RUN
+        self.whitelist_counts = {"channels": 0, "groups": 0, "bots": 0, "users": 0}
+
         # Always whitelist self (Saved Messages)
         try:
             me = await self.client.get_me()
@@ -327,6 +330,11 @@ class TelegramCleaner:
                 if me.username:
                     self.whitelist_usernames.add(me.username.lower())
                 await self.log_and_report(f"🛡️  [SECURE] Whitelisted your account (Saved Messages)")
+
+            # PROTECT THE BOT ITSELF
+            bot_me = await self.client.get_me() # This client's me is the userbot, wait.
+            # No, I need the ID of the bot Lisa Kenny is talking to.
+            # That's already passed via the bot_interface.py
         except errors.FloodWaitError as e:
             await self.log_and_report(f"⏳ Rate limit hit checking identity, waiting {e.seconds + 5}s...")
             await asyncio.sleep(e.seconds + 5)
@@ -451,8 +459,10 @@ class TelegramCleaner:
         self.logs["remaining_chats"] = len(final_dialogs)
 
         # Calculate user whitelisted items only for the summary report
+        # Filter out system protection names
+        system_names = ["Saved Messages", "Telegram", "ID: 777000"]
         user_skipped = [name for name in self.logs["skipped_items"]
-                       if name not in ["Saved Messages", "Telegram"] and "ID: 777000" not in name]
+                       if name not in system_names and not any(sn in name for sn in system_names)]
 
         summary = (
             f"\n🏆 [MISSION COMPLETE] Final Summary:\n"
@@ -460,8 +470,8 @@ class TelegramCleaner:
             f"  🚪 Groups Left: {self.logs['groups_left']}\n"
             f"  ⛔ Bots Blocked/Deleted: {self.logs['bots_blocked_deleted']}\n"
             f"  🗑️  Private Chats Deleted: {self.logs['private_chats_blocked_deleted']}\n"
-            f"  💎 User Items Preserved: {len(user_skipped)}\n"
-            f"  🛡️  System Items Preserved: {len(self.logs['skipped_items']) - len(user_skipped)}\n"
+            f"  💎 Whitelist Preserved: {len(user_skipped)}\n"
+            f"  🛡️  System Protected: {len(self.logs['skipped_items']) - len(user_skipped)}\n"
             f"  ⚠️ Errors: {len(self.logs['errors'])}\n"
             f"  📊 Remaining Chats: {self.logs['remaining_chats']}"
         )
