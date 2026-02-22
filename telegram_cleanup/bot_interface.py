@@ -10,6 +10,7 @@ from .config import load_config
 user_states = {}
 user_clients = {} # Store TelegramCleaner instances per user
 user_whitelists = {}
+active_tasks = {}
 
 def main():
     """Entry point for the bot."""
@@ -60,7 +61,7 @@ async def start_bot():
             "💡 **Whitelist Examples (Keep these!):**\n"
             "• `James bot, @Michael, t.me/MyChannel` (Names/Links)\n"
             "• `1685547486` (Numeric IDs)\n\n"
-            "🛡️ **Safe & Secure:** We auto-keep your 'Saved Messages'.\n"
+            "🛡️ **Safe & Secure:** We auto-keep your 'Saved Messages' and this bot.\n"
             "━━━━━━━━━━━━━━━━━━━━"
         )
 
@@ -77,12 +78,13 @@ async def start_bot():
         if not is_logged_in:
             buttons.append([Button.inline("🔑 Step 1: Login", b"login")])
         else:
-            buttons.append([Button.inline("✅ Logged In (Logout)", b"logout")])
+            buttons.append([Button.inline("✅ Logged In", b"already_logged_in")])
 
         buttons.append([Button.inline("📜 Step 2: Set Whitelist", b"set_whitelist")])
 
         if is_logged_in:
             buttons.append([Button.inline("🚀 Step 3: Start Cleanup", b"run_cleanup")])
+            buttons.append([Button.inline("🚪 Logout & Wipe Data", b"logout")])
 
         if isinstance(event, events.CallbackQuery.Event):
             try:
@@ -92,14 +94,17 @@ async def start_bot():
         else:
             await event.respond(welcome_text, buttons=buttons)
 
+    @bot.on(events.CallbackQuery(data=b"already_logged_in"))
+    async def handle_already_logged_in(event):
+        await event.answer("✅ You are already logged in!", alert=True)
+
     @bot.on(events.CallbackQuery(data=b"login"))
     async def handle_login_click(event):
-        try: await event.answer()
-        except: pass
+        await event.answer()
         sender_id = event.sender_id
         user_states[sender_id] = 'WAITING_PHONE'
         text = "📱 Please enter your phone number in international format (e.g., `+1234567890`):"
-        buttons = [Button.inline("🔙 Back", b"back_to_start")]
+        buttons = [[Button.inline("🔙 Back", b"back_to_start")]]
         try:
             await event.edit(text, buttons=buttons)
         except Exception:
@@ -107,24 +112,23 @@ async def start_bot():
 
     @bot.on(events.CallbackQuery(data=b"set_whitelist"))
     async def handle_whitelist_click(event):
-        try: await event.answer()
-        except: pass
+        await event.answer()
         sender_id = event.sender_id
         current = ", ".join(user_whitelists.get(sender_id, [])) or "None"
         text = (
             f"📝 **Current Whitelist:** {current}\n\n"
             "Send me a comma-separated list of usernames (@name), links (t.me/name), or IDs to keep."
         )
+        buttons = [[Button.inline("🔙 Back", b"back_to_start")]]
         try:
-            await event.edit(text, buttons=[Button.inline("🔙 Back", b"back_to_start")])
+            await event.edit(text, buttons=buttons)
         except Exception:
-            await event.respond(text, buttons=[Button.inline("🔙 Back", b"back_to_start")])
+            await event.respond(text, buttons=buttons)
         user_states[sender_id] = 'SETTING_WHITELIST'
 
     @bot.on(events.CallbackQuery(data=b"back_to_start"))
     async def handle_back(event):
-        try: await event.answer()
-        except: pass
+        await event.answer()
         await send_main_menu(event)
 
     @bot.on(events.NewMessage())
@@ -139,7 +143,8 @@ async def start_bot():
             # Clean up old client if exists
             old_cleaner = user_clients.get(sender_id)
             if old_cleaner:
-                await old_cleaner.client.disconnect()
+                try: await old_cleaner.client.disconnect()
+                except: pass
 
             await event.respond("⏳ Sending login code...")
             session_name = f"user_{sender_id}"
@@ -228,40 +233,57 @@ async def start_bot():
 
     @bot.on(events.CallbackQuery(data=b"run_cleanup"))
     async def handle_run_cleanup(event):
-        try: await event.answer("🚀 Starting...")
-        except: pass
+        await event.answer("🚀 Cleanup initializing...")
         sender_id = event.sender_id
-        if user_states.get(sender_id) != 'READY':
-            await event.respond("⚠️ You must be logged in first!", buttons=[Button.inline("🔙 Menu", b"back_to_start")])
-            return
+        if user_states.get(sender_id) != 'READY' and user_states.get(sender_id) != 'IDLE':
+             # Try to recover if they are actually logged in
+             cleaner = user_clients.get(sender_id)
+             if not (cleaner and await cleaner.client.is_user_authorized()):
+                await event.respond("⚠️ You must be logged in first!", buttons=[Button.inline("🔙 Menu", b"back_to_start")])
+                return
 
         cleaner = user_clients.get(sender_id)
         user_states[sender_id] = 'CLEANING'
-        text = "⚡ **Cleanup in progress...**\nCheck messages below for live updates."
+        text = "⚡ **Intelligent Cleanup Initiated!**\n\nI am now analyzing your account. Please watch the dashboard below for live updates."
+        buttons = [[Button.inline("🔙 Stop / Menu", b"back_to_start")]]
         try:
-            await event.edit(text, buttons=[Button.inline("🔙 Menu", b"back_to_start")])
+            await event.edit(text, buttons=buttons)
         except Exception:
-            await event.respond(text, buttons=[Button.inline("🔙 Menu", b"back_to_start")])
+            await event.respond(text, buttons=buttons)
 
         whitelist = set(user_whitelists.get(sender_id, []))
 
-        try:
-            # We run this in the background so it doesn't block the bot's event loop
-            asyncio.create_task(run_cleanup_task(sender_id, cleaner, whitelist))
-        except Exception as e:
-            await event.respond(f"❌ Cleanup failed: {str(e)}")
+        # Cancel old task if exists
+        if sender_id in active_tasks:
+            active_tasks[sender_id].cancel()
+
+        task = asyncio.create_task(run_cleanup_task(sender_id, cleaner, whitelist))
+        active_tasks[sender_id] = task
 
     async def run_cleanup_task(sender_id, cleaner, whitelist):
         try:
             # Dashboard message
             dashboard = await bot.send_message(sender_id, "⚙️ **Preparing Intelligent Cleanup...**")
 
+            log_buffer = []
+            last_update = 0
+            lock = asyncio.Lock()
+
             async def bot_progress_callback(msg):
-                try:
-                    await dashboard.edit(f"🛰️ **Cleanup Dashboard**\n━━━━━━━━━━━━━━━━━━━━\n{msg}")
-                except Exception:
-                    # Message might be same or edited too fast
-                    pass
+                nonlocal last_update
+                async with lock:
+                    log_buffer.append(msg)
+                    if len(log_buffer) > 10:
+                        log_buffer.pop(0)
+
+                now = asyncio.get_event_loop().time()
+                if now - last_update > 1.5: # Respect Telegram edit limits (1.5s to be safe)
+                    last_update = now
+                    try:
+                        logs = "\n".join(log_buffer)
+                        await dashboard.edit(f"🛰️ **Cleanup Dashboard**\n━━━━━━━━━━━━━━━━━━━━\n{logs}")
+                    except Exception:
+                        pass
 
             cleaner.progress_callback = bot_progress_callback
             await cleaner.run_cleanup(whitelist)
@@ -278,27 +300,45 @@ async def start_bot():
 
     @bot.on(events.CallbackQuery(data=b"logout"))
     async def handle_logout(event):
-        try: await event.answer("👋 Logging out...")
-        except: pass
+        await event.answer("👋 Wiping session data...")
         sender_id = event.sender_id
+
+        if sender_id in active_tasks:
+            active_tasks[sender_id].cancel()
+            try: del active_tasks[sender_id]
+            except: pass
+
         cleaner = user_clients.pop(sender_id, None)
         if cleaner:
             try:
+                # Disconnect instead of log_out to keep the session file if they want to re-login,
+                # BUT the user said "Wipe Data", so we log_out.
                 await cleaner.client.log_out()
                 await cleaner.client.disconnect()
             except Exception:
-                pass
-            # Clean up session file
-            session_file = f"user_{sender_id}.session"
-            if os.path.exists(session_file):
-                os.remove(session_file)
+                try: await cleaner.client.disconnect()
+                except: pass
+
+        # Thoroughly clean up all user-related files
+        session_prefix = f"user_{sender_id}"
+        files_to_remove = [
+            f"sessions/{session_prefix}.session",
+            f"sessions/{session_prefix}.session-journal",
+            f"sessions/{session_prefix}_prefs.json",
+            f"sessions/{session_prefix}_progress.json"
+        ]
+        for f in files_to_remove:
+            if os.path.exists(f):
+                try: os.remove(f)
+                except: pass
 
         user_states[sender_id] = 'IDLE'
-        text = "👋 Logged out successfully. Your session data has been cleared."
+        text = "👋 **Logged out successfully.**\n\nAll your session files and data have been permanently deleted from our server."
+        buttons = [[Button.inline("🔙 Start Over", b"back_to_start")]]
         try:
-            await event.edit(text, buttons=[Button.inline("🔙 Menu", b"back_to_start")])
+            await event.edit(text, buttons=buttons)
         except Exception:
-            await event.respond(text, buttons=[Button.inline("🔙 Menu", b"back_to_start")])
+            await event.respond(text, buttons=buttons)
 
     await bot.run_until_disconnected()
 
