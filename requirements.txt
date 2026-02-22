@@ -2,4 +2,3 @@ telethon
 python-dotenv
 flask
 gunicorn
-cryptg
