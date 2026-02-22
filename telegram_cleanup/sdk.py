@@ -29,30 +29,30 @@ def _atomic_write(filename, data):
 
 class AdaptiveRateLimiter:
     """Intelligently manages delays and concurrency to avoid FloodWaitErrors."""
-    def __init__(self, base_delay=1.0):
+    def __init__(self, base_delay=0.6):
         self.base_delay = base_delay
         self.current_delay = base_delay
         self.multiplier = 1.0
-        self.max_concurrency = 3
-        self.concurrency = 1 # Start safely
+        self.max_concurrency = 5
+        self.concurrency = 2 # Start with a safe concurrency
 
     async def wait(self):
         # Destructive actions need a gap
-        delay = (self.current_delay * self.multiplier) + (random.random() * 0.3)
+        delay = (self.current_delay * self.multiplier) + (random.random() * 0.2)
         await asyncio.sleep(delay)
 
     def backoff(self, seconds):
         """Increases the delay significantly and drops concurrency after a FloodWait."""
-        self.multiplier = min(self.multiplier * 2.5, 15.0)
-        self.current_delay = max(self.current_delay, seconds / 8.0)
+        self.multiplier = min(self.multiplier * 2.2, 10.0)
+        self.current_delay = max(self.current_delay, seconds / 10.0)
         self.concurrency = 1 # Drop to safety
         print(f"⚠️  Limiter: Backing off. Concurrency set to 1. Base delay: {self.current_delay:.1f}s")
 
     def cooldown(self):
         """Slowly reduces the multiplier and increases concurrency when things are working well."""
-        self.multiplier = max(1.0, self.multiplier * 0.90)
-        if self.multiplier < 1.2 and self.concurrency < self.max_concurrency:
-            if random.random() < 0.2: # Ramp up
+        self.multiplier = max(1.0, self.multiplier * 0.85)
+        if self.multiplier < 1.5 and self.concurrency < self.max_concurrency:
+            if random.random() < 0.25: # Faster ramp up
                 self.concurrency += 1
                 print(f"📈 Limiter: Increasing concurrency to {self.concurrency}")
 
