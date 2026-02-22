@@ -33,11 +33,14 @@ async def start_bot():
         welcome_text = (
             "👋 **Welcome to Telegram Cleanup Bot!**\n\n"
             "I can help you reset your account by removing unwanted channels, groups, and bots while keeping what's important.\n\n"
-            "💡 **How it works:**\n"
-            "1. Login to your account via this bot.\n"
-            "2. Set your whitelist (items to keep).\n"
-            "3. Start the cleanup.\n\n"
-            "🔒 **Security:** Your session is processed in memory and terminated after cleanup."
+            "💡 **Examples of what you can keep:**\n"
+            "• `James bot, @Michael, t.me/BrainsSignals` (Comma separated)\n"
+            "• `1685547486` (Numeric IDs are also supported)\n\n"
+            "🚀 **Getting Started:**\n"
+            "1. Click **🔑 Login** to link your account.\n"
+            "2. Click **📜 Set Whitelist** to choose what NOT to delete.\n"
+            "3. Click **🚀 Start Cleanup** when ready.\n\n"
+            "🛡️ **Security:** Your session is private and encrypted."
         )
         await event.respond(welcome_text, buttons=[
             [Button.inline("🔑 Login to Telegram", b"login")],
@@ -95,7 +98,13 @@ async def start_bot():
                 cleaner.phone = text
                 cleaner.phone_code_hash = send_code_result.phone_code_hash
                 user_states[sender_id] = 'WAITING_CODE'
-                await event.respond("📩 Code sent! Please enter the code you received from Telegram:")
+
+                msg = (
+                    "📩 **Code sent!**\n\n"
+                    "⚠️ **IMPORTANT:** To prevent Telegram from cancelling the code, do NOT send it as a plain number.\n\n"
+                    "Please send it in this format: `code: 1 2 3 4 5` (add 'code:' and spaces between digits)."
+                )
+                await event.respond(msg, parse_mode='markdown')
             except Exception as e:
                 await event.respond(f"❌ Error: {str(e)}\nTry /start again.")
                 user_states[sender_id] = 'IDLE'
@@ -103,7 +112,13 @@ async def start_bot():
         elif state == 'WAITING_CODE':
             cleaner = user_clients.get(sender_id)
             try:
-                await cleaner.client.sign_in(cleaner.phone, text, phone_code_hash=cleaner.phone_code_hash)
+                # Clean the code: remove 'code:', spaces, and other non-digit chars
+                clean_code = re.sub(r'\D', '', text)
+                if not clean_code or len(clean_code) < 5:
+                    await event.respond("❌ Invalid format. Please send like: `code: 1 2 3 4 5`")
+                    return
+
+                await cleaner.client.sign_in(cleaner.phone, clean_code, phone_code_hash=cleaner.phone_code_hash)
                 await finish_login(event, sender_id)
             except errors.SessionPasswordNeededError:
                 user_states[sender_id] = 'WAITING_2FA'

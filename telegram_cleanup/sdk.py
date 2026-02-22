@@ -28,24 +28,33 @@ def _atomic_write(filename, data):
         print(f"⚠️ Atomic write failed for {filename}: {str(e)}")
 
 class AdaptiveRateLimiter:
-    """Intelligently manages delays to avoid FloodWaitErrors."""
-    def __init__(self, base_delay=1.5):
+    """Intelligently manages delays and concurrency to avoid FloodWaitErrors."""
+    def __init__(self, base_delay=1.2):
         self.base_delay = base_delay
         self.current_delay = base_delay
         self.multiplier = 1.0
+        self.max_concurrency = 5
+        self.concurrency = 3 # Start with a moderate concurrency
 
     async def wait(self):
-        delay = (self.current_delay * self.multiplier) + random.random()
+        # Destructive actions need a gap
+        delay = (self.current_delay * self.multiplier) + (random.random() * 0.5)
         await asyncio.sleep(delay)
 
     def backoff(self, seconds):
-        """Increases the delay significantly after a FloodWait."""
-        self.multiplier = min(self.multiplier * 2.0, 10.0)
-        self.current_delay = max(self.current_delay, seconds / 10.0)
+        """Increases the delay significantly and drops concurrency after a FloodWait."""
+        self.multiplier = min(self.multiplier * 2.5, 15.0)
+        self.current_delay = max(self.current_delay, seconds / 8.0)
+        self.concurrency = 1 # Drop to safety
+        print(f"⚠️  Limiter: Backing off. Concurrency set to 1. Base delay: {self.current_delay:.1f}s")
 
     def cooldown(self):
-        """Slowly reduces the multiplier when things are working well."""
-        self.multiplier = max(1.0, self.multiplier * 0.95)
+        """Slowly reduces the multiplier and increases concurrency when things are working well."""
+        self.multiplier = max(1.0, self.multiplier * 0.92)
+        if self.multiplier < 1.5 and self.concurrency < self.max_concurrency:
+            if random.random() < 0.1: # Slowly ramp up
+                self.concurrency += 1
+                print(f"📈 Limiter: Increasing concurrency to {self.concurrency}")
 
 class TelegramCleaner:
     """A class to encapsulate the logic for cleaning a Telegram account."""
@@ -176,9 +185,10 @@ class TelegramCleaner:
 
         return is_kept
 
-    async def _process_dialog(self, entity, ignore_processed=False):
+    async def _process_dialog(self, entity, ignore_processed=False, semaphore=None):
         """Processes a single dialog entity with concurrency control."""
-        async with self.semaphore:
+        sem = semaphore or self.semaphore
+        async with sem:
             return await self._process_dialog_internal(entity, ignore_processed=ignore_processed)
 
     async def _process_dialog_internal(self, entity, retry_count=0, ignore_processed=False):
@@ -189,7 +199,8 @@ class TelegramCleaner:
             return True
 
         if self._is_whitelisted(entity):
-            await self.log_and_report(f"💎 [WHITELISTED] {name}")
+            # Only print whitelisting to console, avoid spamming bot
+            print(f"💎 [WHITELISTED] {name}")
             if name not in self.logs["skipped_items"]:
                 self.logs["skipped_items"].append(name)
             self.progress["processed_ids"].append(entity.id)
@@ -203,17 +214,17 @@ class TelegramCleaner:
                 await self.client(LeaveChannelRequest(entity))
                 log_key = "channels_left" if getattr(entity, 'broadcast', False) else "groups_left"
                 self.logs[log_key] += 1
-                await self.log_and_report(f"🚪 Left {'channel' if log_key == 'channels_left' else 'group'}: {name}")
+                print(f"🚪 Left {'channel' if log_key == 'channels_left' else 'group'}: {name}")
             elif isinstance(entity, User):
                 if entity.bot:
                     await self.client(BlockRequest(entity.id))
                     await self.client.delete_dialog(entity, revoke=True)
                     self.logs["bots_blocked_deleted"] += 1
-                    await self.log_and_report(f"⛔ Blocked and deleted bot: {name}")
+                    print(f"⛔ Blocked and deleted bot: {name}")
                 else:
                     await self.client.delete_dialog(entity, revoke=True)
                     self.logs["private_chats_blocked_deleted"] += 1
-                    await self.log_and_report(f"🗑️  Deleted private chat: {name}")
+                    print(f"🗑️  Deleted private chat: {name}")
             else:
                 print(f"⚠️ Skipping unknown entity: {name}")
                 self.logs["errors"].append(f"Unknown entity: {name}")
@@ -363,17 +374,45 @@ class TelegramCleaner:
         await self.log_and_report("\n⏳ Starting cleanup in 5 seconds...")
         await asyncio.sleep(5)
 
-        # --- Process in Batches ---
-        batch_size = 20
-        for i in range(0, len(dialogs), batch_size):
-            batch = dialogs[i:i + batch_size]
-            await self.log_and_report(f"📦 Processing batch {i//batch_size + 1}/{(len(dialogs)-1)//batch_size + 1}")
-            tasks = [self._process_dialog(d.entity) for d in batch if d.entity]
-            await asyncio.gather(*tasks)
-            _atomic_write(self.progress_file, self.progress)
+        # --- Process in Smart Batches ---
+        # First, quickly process whitelisted items in parallel (no delay needed)
+        whitelisted_in_batch = [d for d in dialogs if self._is_whitelisted(d.entity)]
+        non_whitelisted = [d for d in dialogs if not self._is_whitelisted(d.entity)]
 
-            # Dynamic cooldown between batches
-            await asyncio.sleep(2 + random.random() * 2)
+        if whitelisted_in_batch:
+            await self.log_and_report(f"⚡ Fast-tracking {len(whitelisted_in_batch)} whitelisted items...")
+            fast_sem = asyncio.Semaphore(10) # High concurrency for non-destructive whitelist skips
+            tasks = [self._process_dialog(d.entity, semaphore=fast_sem) for d in whitelisted_in_batch]
+            await asyncio.gather(*tasks)
+
+        # Then, process destructive actions with adaptive concurrency
+        await self.log_and_report(f"🧹 Starting destructive cleanup for {len(non_whitelisted)} items...")
+
+        i = 0
+        total = len(non_whitelisted)
+        while i < total:
+            # Use current dynamic concurrency from limiter
+            batch_size = self.limiter.concurrency
+            batch = non_whitelisted[i : i + batch_size]
+
+            # Report progress every batch
+            if self.progress_callback:
+                # Use a more compact report for the bot to avoid spam
+                percentage = int((i/total)*100) if total > 0 else 100
+                await self.progress_callback(f"⏳ **Progress:** {i}/{total} ({percentage}%) | **Speed:** {batch_size}x")
+            else:
+                print(f"📦 Progress: {i}/{total} (Concurrency: {batch_size})")
+
+            # Create a temporary semaphore for this batch's concurrency
+            batch_sem = asyncio.Semaphore(batch_size)
+            tasks = [self._process_dialog(d.entity, semaphore=batch_sem) for d in batch]
+            await asyncio.gather(*tasks)
+
+            _atomic_write(self.progress_file, self.progress)
+            i += batch_size
+
+            # Dynamic gap between batches
+            await asyncio.sleep(1 + random.random())
 
         # --- Verification Passes ---
         for pass_num in range(3):
