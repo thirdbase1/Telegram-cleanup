@@ -29,7 +29,18 @@ async def start_bot():
         return
 
     print("🛰️ Connecting to Telegram...")
-    bot = TelegramClient('bot_session', config['api_id'], config['api_hash'])
+    os.makedirs("sessions", exist_ok=True)
+    bot_session_path = os.path.join("sessions", "bot_session")
+
+    # Optimize Telethon for speed and stability
+    bot = TelegramClient(
+        bot_session_path,
+        config['api_id'],
+        config['api_hash'],
+        connection_retries=None, # Keep retrying
+        retry_delay=1,
+        auto_reconnect=True
+    )
 
     try:
         await bot.start(bot_token=token)
@@ -49,7 +60,8 @@ async def start_bot():
     async def handle_start(event):
         sender_id = event.sender_id
         user_states[sender_id] = 'IDLE'
-        await send_main_menu(event)
+        # Run in background to avoid blocking the event loop
+        asyncio.create_task(send_main_menu(event))
 
     async def send_main_menu(event):
         sender_id = event.sender_id
@@ -65,13 +77,15 @@ async def start_bot():
             "━━━━━━━━━━━━━━━━━━━━"
         )
 
-        # Check if user is already logged in
+        # Fast Login Check: Don't call network if we already know they are active
         cleaner = user_clients.get(sender_id)
         is_logged_in = False
         if cleaner:
-            try:
+            if cleaner.client.is_connected():
+                # If connected, use the faster local check
                 is_logged_in = await cleaner.client.is_user_authorized()
-            except:
+            else:
+                # If disconnected, it's safer to assume not logged in for the UI
                 is_logged_in = False
 
         buttons = []
@@ -96,11 +110,15 @@ async def start_bot():
 
     @bot.on(events.CallbackQuery(data=b"already_logged_in"))
     async def handle_already_logged_in(event):
-        await event.answer("✅ You are already logged in!", alert=True)
+        try: await event.answer("✅ You are already logged in!", alert=True)
+        except: pass
 
     @bot.on(events.CallbackQuery(data=b"login"))
     async def handle_login_click(event):
-        await event.answer()
+        # Answer instantly
+        try: await event.answer()
+        except: pass
+
         sender_id = event.sender_id
         user_states[sender_id] = 'WAITING_PHONE'
         text = "📱 Please enter your phone number in international format (e.g., `+1234567890`):"
@@ -112,7 +130,10 @@ async def start_bot():
 
     @bot.on(events.CallbackQuery(data=b"set_whitelist"))
     async def handle_whitelist_click(event):
-        await event.answer()
+        # Answer instantly
+        try: await event.answer()
+        except: pass
+
         sender_id = event.sender_id
         current = ", ".join(user_whitelists.get(sender_id, [])) or "None"
         text = (
@@ -128,11 +149,16 @@ async def start_bot():
 
     @bot.on(events.CallbackQuery(data=b"back_to_start"))
     async def handle_back(event):
-        await event.answer()
-        await send_main_menu(event)
+        # Answer instantly
+        try: await event.answer()
+        except: pass
+
+        asyncio.create_task(send_main_menu(event))
 
     @bot.on(events.NewMessage())
     async def handle_all_messages(event):
+        # Only handle private messages
+        if not event.is_private: return
         sender_id = event.sender_id
         state = user_states.get(sender_id, 'IDLE')
         text = event.text.strip()
@@ -263,7 +289,10 @@ async def start_bot():
     async def run_cleanup_task(sender_id, cleaner, whitelist):
         try:
             # Dashboard message
-            dashboard = await bot.send_message(sender_id, "⚙️ **Preparing Intelligent Cleanup...**")
+            try:
+                dashboard = await bot.send_message(sender_id, "⚙️ **Preparing Intelligent Cleanup...**")
+            except:
+                return # User blocked the bot
 
             log_buffer = []
             last_update = 0
@@ -288,13 +317,17 @@ async def start_bot():
             cleaner.progress_callback = bot_progress_callback
             await cleaner.run_cleanup(whitelist)
 
-            await bot.send_message(sender_id, "🏁 **Cleanup Mission Complete!**\n\nYour account is now clean.", buttons=[
-                [Button.inline("🔙 Return to Menu", b"back_to_start")]
-            ])
+            try:
+                await bot.send_message(sender_id, "🏁 **Cleanup Mission Complete!**\n\nYour account is now clean.", buttons=[
+                    [Button.inline("🔙 Return to Menu", b"back_to_start")]
+                ])
+            except: pass
         except Exception as e:
-            await bot.send_message(sender_id, f"⚠️ **Cleanup Interrupted:**\n`{str(e)}`", buttons=[
-                [Button.inline("🔙 Back", b"back_to_start")]
-            ])
+            try:
+                await bot.send_message(sender_id, f"⚠️ **Cleanup Interrupted:**\n`{str(e)}`", buttons=[
+                    [Button.inline("🔙 Back", b"back_to_start")]
+                ])
+            except: pass
         finally:
             user_states[sender_id] = 'READY'
 
