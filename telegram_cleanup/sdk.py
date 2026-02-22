@@ -29,12 +29,12 @@ def _atomic_write(filename, data):
 
 class AdaptiveRateLimiter:
     """Intelligently manages delays and concurrency to avoid FloodWaitErrors."""
-    def __init__(self, base_delay=0.8):
+    def __init__(self, base_delay=1.0):
         self.base_delay = base_delay
         self.current_delay = base_delay
         self.multiplier = 1.0
-        self.max_concurrency = 8
-        self.concurrency = 4 # Start with a moderate concurrency
+        self.max_concurrency = 3
+        self.concurrency = 1 # Start safely
 
     async def wait(self):
         # Destructive actions need a gap
@@ -67,11 +67,15 @@ class TelegramCleaner:
             session_name (str): Unique session name for this user.
             progress_callback (callable): Async function to report progress.
         """
-        self.client = TelegramClient(session_name, config["api_id"], config["api_hash"])
+        # Use a sessions/ directory for better security and organization
+        os.makedirs("sessions", exist_ok=True)
+        session_path = os.path.join("sessions", session_name)
+
+        self.client = TelegramClient(session_path, config["api_id"], config["api_hash"])
         self.phone = config["phone"]
         self.session_name = session_name
-        self.pref_file = f"{session_name}_prefs.json"
-        self.progress_file = f"{session_name}_progress.json"
+        self.pref_file = os.path.join("sessions", f"{session_name}_prefs.json")
+        self.progress_file = os.path.join("sessions", f"{session_name}_progress.json")
 
         self.progress_callback = progress_callback
         self.logs = self._init_logs()
@@ -199,8 +203,7 @@ class TelegramCleaner:
             return True
 
         if self._is_whitelisted(entity):
-            # Only print whitelisting to console, avoid spamming bot
-            print(f"💎 [WHITELISTED] {name}")
+            await self.log_and_report(f"💎 [WHITELISTED] {name}")
             if name not in self.logs["skipped_items"]:
                 self.logs["skipped_items"].append(name)
             self.progress["processed_ids"].append(entity.id)
@@ -214,17 +217,17 @@ class TelegramCleaner:
                 await self.client(LeaveChannelRequest(entity))
                 log_key = "channels_left" if getattr(entity, 'broadcast', False) else "groups_left"
                 self.logs[log_key] += 1
-                print(f"🚪 Left {'channel' if log_key == 'channels_left' else 'group'}: {name}")
+                await self.log_and_report(f"🚪 Left {'channel' if log_key == 'channels_left' else 'group'}: {name}")
             elif isinstance(entity, User):
                 if entity.bot:
                     await self.client(BlockRequest(entity.id))
                     await self.client.delete_dialog(entity, revoke=True)
                     self.logs["bots_blocked_deleted"] += 1
-                    print(f"⛔ Blocked and deleted bot: {name}")
+                    await self.log_and_report(f"⛔ Blocked and deleted bot: {name}")
                 else:
                     await self.client.delete_dialog(entity, revoke=True)
                     self.logs["private_chats_blocked_deleted"] += 1
-                    print(f"🗑️  Deleted private chat: {name}")
+                    await self.log_and_report(f"🗑️  Deleted private chat: {name}")
             else:
                 print(f"⚠️ Skipping unknown entity: {name}")
                 self.logs["errors"].append(f"Unknown entity: {name}")

@@ -8,3 +8,4 @@ cleanup_log_*.json
 cleanup_progress.json
 telegram_prefs.json
 telegram_cleanup.session
+sessions/
