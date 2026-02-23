@@ -13,20 +13,25 @@ def health_check():
 
 def run_bot_in_thread():
     """Starts the Telethon bot in a separate asyncio event loop."""
+    print("🧵 Bot thread: Starting...")
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
+        print("🧵 Bot thread: Running start_bot()...")
         loop.run_until_complete(start_bot())
     except Exception as e:
         print(f"❌ Bot Thread Error: {e}")
+    finally:
+        print("🧵 Bot thread: Terminated.")
 
 # Start the bot thread immediately when the module is loaded (for Gunicorn)
 # We use a lock-file or environment check to ensure only one instance runs
 # if the server uses multiple workers (though 1 worker is recommended).
 if os.environ.get("BOT_STARTED") != "true":
     os.environ["BOT_STARTED"] = "true"
-    threading.Thread(target=run_bot_in_thread, daemon=True).start()
-    print("🤖 Bot thread started.")
+    t = threading.Thread(target=run_bot_in_thread, daemon=True)
+    t.start()
+    print(f"🤖 Bot thread initialized (Thread Name: {t.name}).")
 
 if __name__ == "__main__":
     # For local testing or simple python execution

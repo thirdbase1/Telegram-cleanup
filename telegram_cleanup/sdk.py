@@ -63,7 +63,7 @@ class TelegramCleaner:
         """
         Initializes the TelegramCleaner.
         Args:
-            config (dict): api_id, api_hash, and phone.
+            config (dict): api_id, api_hash, and phone (optional).
             session_name (str): Unique session name for this user.
             progress_callback (callable): Async function to report progress.
         """
@@ -72,7 +72,7 @@ class TelegramCleaner:
         session_path = os.path.join("sessions", session_name)
 
         self.client = TelegramClient(session_path, config["api_id"], config["api_hash"])
-        self.phone = config["phone"]
+        self.phone = config.get("phone")
         self.session_name = session_name
         self.pref_file = os.path.join("sessions", f"{session_name}_prefs.json")
         self.progress_file = os.path.join("sessions", f"{session_name}_progress.json")

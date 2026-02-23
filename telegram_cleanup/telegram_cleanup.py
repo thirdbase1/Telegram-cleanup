@@ -6,9 +6,16 @@ def main_cli():
     """Command-line interface for the Telegram Cleanup script."""
     config = load_config()
 
+    if not config.get("phone"):
+        print("\n📱 No PHONE found in configuration.")
+        config["phone"] = input("👉 Enter your phone number (international format, e.g., +1234567890): ").strip()
+
     cleaner = TelegramCleaner(config)
 
     async def run():
+        if not cleaner.phone:
+             print("❌ Error: Phone number is required.")
+             return
         await cleaner.connect()
 
         user_kept_items = set(config.get("whitelist", []))
