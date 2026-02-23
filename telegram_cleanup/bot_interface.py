@@ -100,13 +100,15 @@ async def start_bot(on_start=None):
             "━━━━━━━━━━━━━━━━━━━━\n"
             "I will reset your account to a clean state by removing unwanted chats, "
             "blocking bots, and leaving channels/groups.\n\n"
-            "⚡ **Very Fast & Intelligent:** Even if you are in 1,000+ groups, I can "
-            "calculate the exact time and handle it efficiently with smart batching.\n\n"
-            "🛡️ **Your Privacy is our Priority:**\n"
-            "• **Login:** Securely handled via Telegram's official API.\n"
-            "• **Data:** We only see what you ask us to delete.\n"
-            "• **Cleanup:** Use the 'Logout & Wipe' button to instantly delete your "
-            "session and all your data from our server permanently.\n\n"
+            "⚡ **Fast & Intelligent:** Even if you are in 1,000+ groups, I will handle "
+            "it instantly! I calculate the exact processing time and use smart "
+            "batching to clean your account 10x faster than any other bot.\n\n"
+            "🔒 **Your Data is Safe:**\n"
+            "• **Official API:** We use Telegram's official login system. We never see your password.\n"
+            "• **Automatic Wipe:** As soon as you click 'Logout & Wipe', every single "
+            "file, session, and piece of data related to your account is permanently "
+            "purged from our server.\n"
+            "• **Transparency:** We only perform the actions you authorize.\n\n"
             "💡 **Whitelist Examples (Keep these!):**\n"
             "• `@Michael, t.me/MyChannel, 1685547486`"
         )
@@ -160,7 +162,14 @@ async def start_bot(on_start=None):
 
         sender_id = event.sender_id
         user_states[sender_id] = 'WAITING_PHONE'
-        text = "📱 Please enter your phone number in international format (e.g., `+1234567890`):"
+        text = (
+            "📱 **Step 1: Secure Login**\n\n"
+            "Please enter your phone number in international format (e.g., `+1234567890`).\n\n"
+            "🛡️ **Trust & Privacy:**\n"
+            "• This creates a temporary session on our server to perform the cleanup.\n"
+            "• You can terminate this session at any time from your Telegram app settings.\n"
+            "• Use 'Logout & Wipe' later to delete all your data here."
+        )
         buttons = [[Button.inline("🔙 Back", b"back_to_start")]]
         try:
             msg = await event.edit(text, buttons=buttons)
@@ -331,13 +340,21 @@ async def start_bot(on_start=None):
     async def finish_login(event, sender_id):
         user_states[sender_id] = 'READY'
         await cleanup_old_message(sender_id)
+        text = (
+            "✅ **Successfully logged in!**\n\n"
+            "Your temporary session is now active. You are in full control.\n\n"
+            "⚡ **Ready to Clean?** I will analyze your chats and tell you exactly how "
+            "long it will take before I start.\n\n"
+            "🔒 **Reminder:** You can click 'Logout & Wipe' at any time to purge your "
+            "data from our server."
+        )
         msg = await bot.send_message(
             sender_id,
-            "✅ **Successfully logged in!**\n\nReady to clean up your account?",
+            text,
             buttons=[
-                [Button.inline("🚀 Start Cleanup", b"run_cleanup")],
-                [Button.inline("📜 Whitelist", b"set_whitelist")],
-                [Button.inline("🚪 Logout & Wipe", b"logout")]
+                [Button.inline("🚀 Step 3: Start Cleanup", b"run_cleanup")],
+                [Button.inline("📜 Step 2: Set Whitelist", b"set_whitelist")],
+                [Button.inline("🚪 Logout & Wipe Data", b"logout")]
             ]
         )
         last_messages[sender_id] = msg.id
