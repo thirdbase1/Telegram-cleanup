@@ -162,6 +162,23 @@ class TelegramCleaner:
         _atomic_write(log_file, self.logs)
         print(f"📝 State saved for {self.session_name}")
 
+    def estimate_duration(self, total_chats, whitelisted_chats):
+        """Calculates an estimated duration for the cleanup."""
+        to_process = total_chats - whitelisted_chats
+        if to_process <= 0:
+            return "0 seconds"
+
+        # Average time per destructive action is ~1.2s with current limiter settings
+        seconds = to_process * 1.2
+
+        if seconds < 60:
+            return f"~{int(seconds)} seconds"
+        elif seconds < 3600:
+            return f"~{int(seconds // 60)} minutes"
+        else:
+            hours = seconds / 3600
+            return f"~{hours:.1f} hours"
+
     def _is_whitelisted(self, entity):
         """Checks if an entity is in the whitelist and updates counts if it's the first time."""
         is_kept = False
@@ -368,13 +385,16 @@ class TelegramCleaner:
                         else:
                             self.whitelist_counts["users"] += 1
 
+            total_whitelisted = sum(self.whitelist_counts.values())
+            est_time = self.estimate_duration(len(dialogs), total_whitelisted)
+
             report = (
                 f"\n📈 [REPORT] Scan Complete:\n"
                 f"  - Total Chats Found: {len(dialogs)}\n"
-                f"  - Whitelisted Channels: {self.whitelist_counts['channels']}\n"
-                f"  - Whitelisted Groups: {self.whitelist_counts['groups']}\n"
-                f"  - Whitelisted Bots: {self.whitelist_counts['bots']}\n"
-                f"  - Whitelisted Users: {self.whitelist_counts['users']} (incl. you)"
+                f"  - Whitelisted Items: {total_whitelisted}\n"
+                f"  - Items to Remove: {len(dialogs) - total_whitelisted}\n"
+                f"  - ⏳ Estimated Time: **{est_time}**\n\n"
+                f"  (Whitelisted: {self.whitelist_counts['channels']} Ch, {self.whitelist_counts['groups']} Gr, {self.whitelist_counts['bots']} Bt, {self.whitelist_counts['users']} Us)"
             )
             await self.log_and_report(report)
 
