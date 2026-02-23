@@ -11,7 +11,8 @@ This bot is ready for cloud deployment using the provided `main.py` and `require
 - **Application Server**: Gunicorn (WSGI) or any Python runner.
 - **Port**: 8000 (standard).
 - **Environment Variables**: Ensure `API_ID`, `API_HASH`, and `BOT_TOKEN` are configured in your platform settings.
-- **Workers**: If using Gunicorn, set workers to `1` to prevent duplicate bot instances.
+- **Start Command**: `gunicorn --workers 1 --threads 2 --bind 0.0.0.0:8000 main:app`
+- **Important**: You must use **`--workers 1`**. Using more than 1 worker will cause session conflicts and the bot will not respond.
 
 ## Purpose
 

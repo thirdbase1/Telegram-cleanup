@@ -17,42 +17,56 @@ def main():
     """Entry point for the bot."""
     asyncio.run(start_bot())
 
-async def start_bot():
+async def start_bot(on_start=None):
     print("🚀 [Bot] Initialization started.")
     try:
         config = load_config()
+        print(f"📦 [Bot] Config loaded: API_ID={config['api_id']}, API_HASH={config['api_hash'][:5]}***")
     except Exception as e:
-        print(f"❌ Configuration error: {e}")
+        print(f"❌ [Bot] Configuration error: {e}")
         return
 
     token = config.get('bot_token')
     if not token:
-        print("❌ Error: BOT_TOKEN not found in environment variables.")
+        print("❌ [Bot] Error: BOT_TOKEN not found in environment variables.")
         return
+    else:
+        print(f"🔑 [Bot] BOT_TOKEN found (starts with: {token[:10]}...)")
 
-    print("🛰️ Connecting to Telegram...")
+    print("🛰️ [Bot] Connecting to Telegram...")
     try:
         os.makedirs("sessions", exist_ok=True)
+        print("📁 [Bot] 'sessions' directory ready.")
     except Exception as e:
-        print(f"⚠️ Warning: Could not create 'sessions' directory: {e}")
+        print(f"⚠️ [Bot] Warning: Could not create 'sessions' directory: {e}")
+
     bot_session_path = os.path.join("sessions", "bot_session")
+    print(f"📄 [Bot] Using session file: {bot_session_path}")
 
     # Optimize Telethon for speed and stability
     bot = TelegramClient(
         bot_session_path,
         config['api_id'],
         config['api_hash'],
-        connection_retries=None, # Keep retrying
-        retry_delay=1,
+        connection_retries=5, # Limited retries for the initial connection
+        retry_delay=2,
         auto_reconnect=True
     )
 
     try:
+        print("⚡ [Bot] Calling bot.start()...")
         await bot.start(bot_token=token)
+        print("✅ [Bot] bot.start() success!")
+
         bot_me = await bot.get_me()
         bot_username = bot_me.username
         bot_id = bot_me.id
         print(f"🤖 Bot is up and running as @{bot_username} (ID: {bot_id})!")
+        if on_start:
+            if asyncio.iscoroutinefunction(on_start):
+                await on_start()
+            else:
+                on_start()
     except errors.rpcerrorlist.ApiIdInvalidError:
         print("❌ FATAL ERROR: Your API_ID or API_HASH is invalid.")
         print("💡 Please check your credentials at https://my.telegram.org")

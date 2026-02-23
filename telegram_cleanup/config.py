@@ -38,10 +38,14 @@ def load_config():
         print(f"❌ Error: API_ID must be a pure integer. Received: '{api_id}'")
         sys.exit(1)
 
+    # Sanitize bot token (remove trailing > or other common artifacts)
+    if bot_token:
+        bot_token = bot_token.strip().rstrip('>')
+
     return {
         "api_id": api_id_int,
         "api_hash": api_hash.strip() if api_hash else None,
         "phone": phone.strip() if phone else None,
-        "bot_token": bot_token.strip() if bot_token else None,
+        "bot_token": bot_token,
         "whitelist": [item.strip() for item in whitelist_env.split(",") if item.strip()]
     }
