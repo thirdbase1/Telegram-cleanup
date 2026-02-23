@@ -21,11 +21,13 @@ def load_config():
     missing = []
     if not api_id: missing.append("API_ID")
     if not api_hash: missing.append("API_HASH")
-    if not phone: missing.append("PHONE")
+
+    # PHONE is only mandatory for CLI mode, not for Bot mode
+    # But we'll make it optional here and handle it in the respective modules.
 
     if missing:
         print(f"❌ Error: Missing configuration for: {', '.join(missing)}")
-        print("💡 Please ensure your .env file contains these variables and is in the current directory.")
+        print("💡 Please ensure your .env file or environment variables contain API_ID and API_HASH.")
         print(f"📂 Current directory: {os.getcwd()}")
         sys.exit(1)
 

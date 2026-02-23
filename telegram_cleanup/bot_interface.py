@@ -18,6 +18,7 @@ def main():
     asyncio.run(start_bot())
 
 async def start_bot():
+    print("🚀 [Bot] Initialization started.")
     try:
         config = load_config()
     except Exception as e:
@@ -26,11 +27,14 @@ async def start_bot():
 
     token = config.get('bot_token')
     if not token:
-        print("❌ Error: BOT_TOKEN not found in .env file.")
+        print("❌ Error: BOT_TOKEN not found in environment variables.")
         return
 
     print("🛰️ Connecting to Telegram...")
-    os.makedirs("sessions", exist_ok=True)
+    try:
+        os.makedirs("sessions", exist_ok=True)
+    except Exception as e:
+        print(f"⚠️ Warning: Could not create 'sessions' directory: {e}")
     bot_session_path = os.path.join("sessions", "bot_session")
 
     # Optimize Telethon for speed and stability
@@ -65,10 +69,15 @@ async def start_bot():
 
     @bot.on(events.NewMessage(pattern='/start'))
     async def handle_start(event):
+        print(f"📥 Received /start from {event.sender_id}")
         sender_id = event.sender_id
         user_states[sender_id] = 'IDLE'
         # Run in background to avoid blocking the event loop
         asyncio.create_task(send_main_menu(event))
+
+    @bot.on(events.NewMessage(pattern='/ping'))
+    async def handle_ping(event):
+        await event.respond("🏓 Pong! The bot is active and listening.")
 
     async def send_main_menu(event):
         sender_id = event.sender_id
