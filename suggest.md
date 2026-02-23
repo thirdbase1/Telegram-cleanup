@@ -36,6 +36,11 @@ To build a successful and profitable bot that users trust, consider the followin
 *   **Self-Hosting Option:** Offer a "Premium" version that users can deploy on their own servers (like Pxxl.dev) with a one-click setup.
 *   **Login Notifications:** Remind users that Telegram will notify them of a new login, and they can terminate the session at any time from their official app settings.
 
+## 5. Big Upgrade Ideas (Roadmap)
+*   **Activity-based Auto-Cleanup:** Automatically leave groups that have been inactive for more than X days.
+*   **Spam-Score Filtering:** Use machine learning or advanced pattern matching to detect and auto-block spam bots.
+*   **Cloud Backup:** Allow users to export their chat history to a personal Google Drive or Dropbox before deletion (as a premium feature).
+
 ---
 
 *Prepared by Jules for thirdbase1's Projects.*

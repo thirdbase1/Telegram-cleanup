@@ -2,6 +2,7 @@ import threading
 import os
 import asyncio
 import time
+import fcntl
 from flask import Flask
 from telegram_cleanup.bot_interface import start_bot
 
@@ -70,12 +71,34 @@ def run_bot_in_thread():
         retry_delay = min(retry_delay * 2, 60) # Exponential backoff
 
 # Start the bot thread immediately when the module is loaded (for Gunicorn)
-# We use a lock-file or environment check to ensure only one instance runs per process
-if os.environ.get("BOT_STARTED") != "true":
-    os.environ["BOT_STARTED"] = "true"
-    t = threading.Thread(target=run_bot_in_thread, daemon=True)
-    t.start()
-    print(f"🛰️  [Main] Bot thread dispatched (ID: {t.name}).")
+# We use a robust file lock to ensure only ONE Gunicorn worker process runs the bot.
+def try_start_bot():
+    lock_file = os.path.join("sessions", "bot.lock")
+    try:
+        # Create sessions dir if not exists
+        os.makedirs("sessions", exist_ok=True)
+
+        # Open lock file
+        f = open(lock_file, "w")
+        # Try to acquire an exclusive lock (non-blocking)
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        # If we got here, we have the lock!
+        if os.environ.get("BOT_STARTED") != "true":
+            os.environ["BOT_STARTED"] = "true"
+            t = threading.Thread(target=run_bot_in_thread, daemon=True)
+            t.start()
+            print(f"🛰️  [Main] Bot thread dispatched in this process (Lock acquired).")
+            # We keep 'f' open to maintain the lock
+            return f
+    except (IOError, BlockingIOError):
+        print(f"🛰️  [Main] Bot already running in another process (Lock busy).")
+    except Exception as e:
+        print(f"⚠️  [Main] Lock error: {e}")
+    return None
+
+# Global lock object to prevent garbage collection
+bot_process_lock = try_start_bot()
 
 if __name__ == "__main__":
     # For local testing

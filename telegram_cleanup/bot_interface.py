@@ -2,14 +2,16 @@ import asyncio
 import os
 import re
 from telethon import TelegramClient, events, Button, errors
+from telethon.sessions import StringSession
 from .sdk import TelegramCleaner
 from .config import load_config
 
 # --- Bot State Management ---
-# states: 'IDLE', 'WAITING_PHONE', 'WAITING_CODE', 'WAITING_2FA', 'READY', 'CLEANING'
+# states: 'IDLE', 'WAITING_PHONE', 'WAITING_CODE', 'WAITING_2FA', 'READY', 'PREVIEWING', 'CLEANING'
 user_states = {}
 user_clients = {} # Store TelegramCleaner instances per user
 user_whitelists = {}
+user_dialogs = {} # Store dialogs for preview
 active_tasks = {}
 last_messages = {} # Track last bot message to keep chat clean
 
@@ -40,17 +42,25 @@ async def start_bot(on_start=None):
     except Exception as e:
         print(f"⚠️ [Bot] Warning: Could not create 'sessions' directory: {e}")
 
-    bot_session_path = os.path.join("sessions", "bot_session")
-    print(f"📄 [Bot] Using session file: {bot_session_path}")
+    # Use StringSession for the bot to avoid SQLite locking issues in multi-worker environments
+    # We try to load it from a file first for persistence
+    bot_session_str = ""
+    bot_session_file = os.path.join("sessions", "bot_session_string.txt")
+    if os.path.exists(bot_session_file):
+        with open(bot_session_file, "r") as f:
+            bot_session_str = f.read().strip()
+
+    print(f"📄 [Bot] Using StringSession (Persistent: {bool(bot_session_str)})")
 
     # Optimize Telethon for speed and stability
     bot = TelegramClient(
-        bot_session_path,
+        StringSession(bot_session_str),
         config['api_id'],
         config['api_hash'],
-        connection_retries=5, # Limited retries for the initial connection
+        connection_retries=10,
         retry_delay=2,
-        auto_reconnect=True
+        auto_reconnect=True,
+        use_ipv6=True
     )
 
     try:
@@ -61,6 +71,11 @@ async def start_bot(on_start=None):
         bot_me = await bot.get_me()
         bot_username = bot_me.username
         bot_id = bot_me.id
+
+        # Save session string for next restart
+        with open(bot_session_file, "w") as f:
+            f.write(bot.session.save())
+
         print(f"🤖 Bot is up and running as @{bot_username} (ID: {bot_id})!")
         if on_start:
             if asyncio.iscoroutinefunction(on_start):
@@ -96,21 +111,28 @@ async def start_bot(on_start=None):
     async def send_main_menu(event):
         sender_id = event.sender_id
         welcome_text = (
-            "🚀 **The Ultimate Telegram Cleanup Bot**\n"
+            "🚀 **Telegram Cleanup Bot — Privacy-First Account Reset**\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "I will reset your account to a clean state by removing unwanted chats, "
-            "blocking bots, and leaving channels/groups.\n\n"
-            "⚡ **Fast & Intelligent:** Even if you are in 1,000+ groups, I will handle "
-            "it instantly! I calculate the exact processing time and use smart "
-            "batching to clean your account 10x faster than any other bot.\n\n"
-            "🔒 **Your Data is Safe:**\n"
-            "• **Official API:** We use Telegram's official login system. We never see your password.\n"
-            "• **Automatic Wipe:** As soon as you click 'Logout & Wipe', every single "
-            "file, session, and piece of data related to your account is permanently "
-            "purged from our server.\n"
-            "• **Transparency:** We only perform the actions you authorize.\n\n"
-            "💡 **Whitelist Examples (Keep these!):**\n"
-            "• `@Michael, t.me/MyChannel, 1685547486`"
+            "Reset your Telegram account by removing unwanted chats, leaving inactive groups, and blocking spam bots — safely and efficiently.\n\n"
+            "⚡ **Optimized Processing**\n"
+            "• Intelligent batching system\n"
+            "• Automatic flood-wait handling\n"
+            "• Safe parallel execution\n"
+            "• Designed to handle 1,000+ memberships reliably\n\n"
+            "🔒 **Privacy by Design**\n"
+            "• Uses Telegram’s official MTProto login (no password access)\n"
+            "• Session stored temporarily and encrypted\n"
+            "• One-click “Logout & Wipe” permanently deletes:\n"
+            "  - Session files\n"
+            "  - Cached data\n"
+            "  - Active connections\n"
+            "  - Database records\n"
+            "• Fully open-source & auditable\n\n"
+            "💡 **Flexible Whitelist**\n"
+            "Keep important chats by:\n"
+            "• Username (@Michael)\n"
+            "• Public link (t.me/MyChannel)\n"
+            "• Numeric ID (1685547486)"
         )
 
         # Fast Login Check: Don't call network if we already know they are active
@@ -361,27 +383,101 @@ async def start_bot(on_start=None):
 
     @bot.on(events.CallbackQuery(data=b"run_cleanup"))
     async def handle_run_cleanup(event):
-        await event.answer("🚀 Cleanup initializing...")
+        await event.answer("🔍 Analyzing Account...")
         sender_id = event.sender_id
-        if user_states.get(sender_id) != 'READY' and user_states.get(sender_id) != 'IDLE':
-             # Try to recover if they are actually logged in
-             cleaner = user_clients.get(sender_id)
-             if not (cleaner and await cleaner.client.is_user_authorized()):
-                await event.respond("⚠️ You must be logged in first!", buttons=[Button.inline("🔙 Menu", b"back_to_start")])
-                return
-
         cleaner = user_clients.get(sender_id)
-        user_states[sender_id] = 'CLEANING'
-        text = "⚡ **Intelligent Cleanup Initiated!**\n\nI am now analyzing your account. Please watch the dashboard below for live updates."
-        buttons = [[Button.inline("🔙 Stop / Menu", b"back_to_start")]]
+        if not cleaner or not await cleaner.client.is_user_authorized():
+            await event.respond("⚠️ Session expired. Please login again.", buttons=[Button.inline("🔙 Menu", b"back_to_start")])
+            return
+
+        text = "🔍 **Step 1: Analyzing Account...**\n\nI am scanning your chats, detecting spam, and checking activity levels. This will only take a moment."
+        msg = await event.edit(text, buttons=[[Button.inline("🔙 Cancel", b"back_to_start")]])
+        last_messages[sender_id] = msg.id
+
         try:
-            await event.edit(text, buttons=buttons)
-        except Exception:
-            await event.respond(text, buttons=buttons)
+            # Refresh whitelist first
+            whitelist = set(user_whitelists.get(sender_id, []))
+            await cleaner._prepare_whitelist(whitelist)
+
+            # Fetch and Analyze
+            dialogs = await cleaner._safe_iter_dialogs()
+            user_dialogs[sender_id] = dialogs
+
+            activity = await cleaner.analyze_activity(dialogs)
+
+            # Count to-be-deleted items
+            to_remove = []
+            spam_bots = 0
+            for d in dialogs:
+                if not cleaner._is_whitelisted(d.entity):
+                    to_remove.append(d)
+                    if getattr(d.entity, 'bot', False):
+                        if cleaner.calculate_spam_score(d.entity) > 50:
+                            spam_bots += 1
+
+            total_whitelisted = len(dialogs) - len(to_remove)
+            est_time = cleaner.estimate_duration(len(dialogs), total_whitelisted)
+
+            preview_text = (
+                "📊 **Step 2: Preview & Analysis Complete**\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"📂 **Total Chats:** {len(dialogs)}\n"
+                f"💎 **Whitelisted:** {total_whitelisted}\n"
+                f"🗑️  **Items to Remove:** {len(to_remove)}\n\n"
+                "⚡ **Advanced Intelligence:**\n"
+                f"• 🧟 **Inactive (30d+):** {activity['inactive_30d'] + activity['inactive_90d']}\n"
+                f"• 🤖 **Suspected Spam Bots:** {spam_bots}\n"
+                f"⏳ **Estimated Time:** {est_time}\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "What would you like to do next?"
+            )
+
+            buttons = [
+                [Button.inline("🚀 Start Cleanup Now", b"confirm_cleanup")],
+                [Button.inline("📦 Export List (JSON)", b"export_cleanup")],
+                [Button.inline("🔙 Back / Change Whitelist", b"back_to_start")]
+            ]
+
+            user_states[sender_id] = 'PREVIEWING'
+            msg = await event.edit(preview_text, buttons=buttons)
+            last_messages[sender_id] = msg.id
+
+        except Exception as e:
+            await event.respond(f"❌ Analysis failed: {str(e)}", buttons=[[Button.inline("🔙 Back", b"back_to_start")]])
+
+    @bot.on(events.CallbackQuery(data=b"export_cleanup"))
+    async def handle_export(event):
+        sender_id = event.sender_id
+        cleaner = user_clients.get(sender_id)
+        dialogs = user_dialogs.get(sender_id)
+
+        if not cleaner or not dialogs:
+            await event.answer("⚠️ Data missing, please restart analysis.")
+            return
+
+        await event.answer("📦 Generating export...")
+        try:
+            export_file = await cleaner.export_data(dialogs)
+            await bot.send_file(sender_id, export_file, caption="📄 Here is your account backup (JSON).")
+            # Remove local file after sending
+            if os.path.exists(export_file):
+                os.remove(export_file)
+        except Exception as e:
+            await event.respond(f"❌ Export failed: {str(e)}")
+
+    @bot.on(events.CallbackQuery(data=b"confirm_cleanup"))
+    async def handle_confirm_cleanup(event):
+        sender_id = event.sender_id
+        cleaner = user_clients.get(sender_id)
+        if not cleaner: return
+
+        user_states[sender_id] = 'CLEANING'
+        text = "⚡ **Step 3: Intelligent Cleanup Initiated!**\n\nPlease watch the dashboard below for live updates."
+        buttons = [[Button.inline("🔙 Stop / Menu", b"back_to_start")]]
+        await event.edit(text, buttons=buttons)
 
         whitelist = set(user_whitelists.get(sender_id, []))
 
-        # Cancel old task if exists
         if sender_id in active_tasks:
             active_tasks[sender_id].cancel()
 
