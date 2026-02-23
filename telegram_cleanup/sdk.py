@@ -183,17 +183,32 @@ class TelegramCleaner:
         username = getattr(entity, 'username', '') or ''
 
         # Patterns common in spam bots
-        spam_patterns = ['crypto', 'invest', 'trading', 'profit', 'casino', 'bet', 'porn', 'sex', 'hot', 'free', 'money']
+        spam_patterns = [
+            'crypto', 'invest', 'trading', 'profit', 'casino', 'bet', 'porn', 'sex', 'hot', 'free', 'money',
+            'gift', 'win', 'prize', 'bonus', 'claim', 'withdraw', 'wallet', 'earn', 'income', 'job', 'work'
+        ]
+
+        low_patterns = ['bot', 'helper', 'robot'] # Common in valid bots too
 
         for pattern in spam_patterns:
             if pattern in name.lower() or pattern in username.lower():
-                score += 30
+                score += 40
 
-        # Random numbers in username often indicate bots
+        for pattern in low_patterns:
+            if pattern in name.lower() or pattern in username.lower():
+                score += 10
+
+        # Random numbers in username often indicate auto-generated bots
         if any(c.isdigit() for c in username):
             digits = sum(c.isdigit() for c in username)
-            if digits > 3:
-                score += 20
+            if digits > 4:
+                score += 30
+            elif digits > 2:
+                score += 15
+
+        # Lack of username for a bot is suspicious
+        if not username and getattr(entity, 'bot', False):
+            score += 20
 
         return min(score, 100)
 
@@ -408,13 +423,17 @@ class TelegramCleaner:
             await asyncio.sleep(e.seconds + 5)
             return await self._safe_iter_dialogs()
 
-    async def run_cleanup(self, user_kept_items):
+    async def run_cleanup(self, user_kept_items, filters=None):
         """
         Runs the main cleanup process.
         Args:
             user_kept_items (set): A set of usernames, links, or names to keep.
+            filters (dict): Optional filters for inactivity and spam.
         """
         self._load_data()
+        filters = filters or {}
+        min_inactivity = filters.get("inactivity_days", 0)
+        spam_threshold = filters.get("spam_threshold", 0)
 
         await self.log_and_report("\n🚀 [INITIATING] Starting intelligent cleanup sequence...")
 
@@ -501,23 +520,45 @@ class TelegramCleaner:
             tasks = [self._process_dialog(d.entity, semaphore=fast_sem) for d in whitelisted_in_batch]
             await asyncio.gather(*tasks)
 
-        # Then, process destructive actions with adaptive concurrency
-        await self.log_and_report(f"🧹 Starting destructive cleanup for {len(non_whitelisted)} items...")
+        # Then, process destructive actions with adaptive concurrency and filters
+        to_remove = []
+        skipped_by_filter = 0
+
+        for d in non_whitelisted:
+            # Check inactivity filter
+            if min_inactivity > 0:
+                last_date = d.date
+                if last_date:
+                    delta = (datetime.now(last_date.tzinfo) - last_date).days if last_date.tzinfo else (datetime.now() - last_date).days
+                    if delta < min_inactivity:
+                        skipped_by_filter += 1
+                        continue
+
+            # Check spam filter for bots
+            if spam_threshold > 0 and getattr(d.entity, 'bot', False):
+                score = self.calculate_spam_score(d.entity)
+                if score < spam_threshold:
+                    skipped_by_filter += 1
+                    continue
+
+            to_remove.append(d)
+
+        if skipped_by_filter > 0:
+            await self.log_and_report(f"🛡️  [FILTER] Skipping {skipped_by_filter} chats that don't meet your criteria.")
+
+        await self.log_and_report(f"🧹 Starting destructive cleanup for {len(to_remove)} items...")
 
         i = 0
-        total = len(non_whitelisted)
+        total = len(to_remove)
         while i < total:
             # Use current dynamic concurrency from limiter
             batch_size = self.limiter.concurrency
-            batch = non_whitelisted[i : i + batch_size]
+            batch = to_remove[i : i + batch_size]
 
             # Report progress every batch
             if self.progress_callback:
-                # Use a more compact report for the bot to avoid spam
                 percentage = int((i/total)*100) if total > 0 else 100
                 await self.progress_callback(f"⏳ **Progress:** {i}/{total} ({percentage}%) | **Speed:** {batch_size}x")
-            else:
-                print(f"📦 Progress: {i}/{total} (Concurrency: {batch_size})")
 
             # Create a temporary semaphore for this batch's concurrency
             batch_sem = asyncio.Semaphore(batch_size)
@@ -527,8 +568,8 @@ class TelegramCleaner:
             _atomic_write(self.progress_file, self.progress)
             i += batch_size
 
-            # Dynamic gap between batches
-            await asyncio.sleep(1 + random.random())
+            # Ultra-fast dynamic gap
+            await asyncio.sleep(0.5 + random.random() * 0.5)
 
         # --- Verification Passes ---
         for pass_num in range(3):

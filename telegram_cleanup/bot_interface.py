@@ -12,6 +12,7 @@ user_states = {}
 user_clients = {} # Store TelegramCleaner instances per user
 user_whitelists = {}
 user_dialogs = {} # Store dialogs for preview
+user_filters = {} # Store user filters
 active_tasks = {}
 last_messages = {} # Track last bot message to keep chat clean
 
@@ -415,7 +416,26 @@ async def start_bot(on_start=None):
                         if cleaner.calculate_spam_score(d.entity) > 50:
                             spam_bots += 1
 
-            total_whitelisted = len(dialogs) - len(to_remove)
+            # Apply selected filters to counts
+            filters = user_filters.get(sender_id, {"inactivity_days": 0, "spam_threshold": 0})
+
+            filtered_remove = []
+            for d in to_remove:
+                if filters["inactivity_days"] > 0:
+                    last_date = d.date
+                    if last_date:
+                        delta = (datetime.now(last_date.tzinfo) - last_date).days if last_date.tzinfo else (datetime.now() - last_date).days
+                        if delta < filters["inactivity_days"]:
+                            continue
+
+                if filters["spam_threshold"] > 0 and getattr(d.entity, 'bot', False):
+                    score = cleaner.calculate_spam_score(d.entity)
+                    if score < filters["spam_threshold"]:
+                        continue
+
+                filtered_remove.append(d)
+
+            total_whitelisted = len(dialogs) - len(filtered_remove)
             est_time = cleaner.estimate_duration(len(dialogs), total_whitelisted)
 
             preview_text = (
@@ -423,17 +443,30 @@ async def start_bot(on_start=None):
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"📂 **Total Chats:** {len(dialogs)}\n"
                 f"💎 **Whitelisted:** {total_whitelisted}\n"
-                f"🗑️  **Items to Remove:** {len(to_remove)}\n\n"
+                f"🗑️  **Items to Remove:** {len(filtered_remove)}\n\n"
                 "⚡ **Advanced Intelligence:**\n"
                 f"• 🧟 **Inactive (30d+):** {activity['inactive_30d'] + activity['inactive_90d']}\n"
                 f"• 🤖 **Suspected Spam Bots:** {spam_bots}\n"
                 f"⏳ **Estimated Time:** {est_time}\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                "What would you like to do next?"
+                "⚙️ **Cleanup Filters:**\n"
+                f"• Inactivity: {'All' if filters['inactivity_days'] == 0 else f'>{filters[ 'inactivity_days']} days'}\n"
+                f"• Spam Score: {'All' if filters['spam_threshold'] == 0 else f'>{filters['spam_threshold']}'}\n"
+                "━━━━━━━━━━━━━━━━━━━━"
             )
 
             buttons = [
                 [Button.inline("🚀 Start Cleanup Now", b"confirm_cleanup")],
+                [
+                    Button.inline("⏳ Inact: All", b"set_filter_inact_0"),
+                    Button.inline("7d", b"set_filter_inact_7"),
+                    Button.inline("30d", b"set_filter_inact_30")
+                ],
+                [
+                    Button.inline("🤖 Spam: All", b"set_filter_spam_0"),
+                    Button.inline("Med", b"set_filter_spam_50"),
+                    Button.inline("High", b"set_filter_spam_80")
+                ],
                 [Button.inline("📦 Export List (JSON)", b"export_cleanup")],
                 [Button.inline("🔙 Back / Change Whitelist", b"back_to_start")]
             ]
@@ -465,6 +498,25 @@ async def start_bot(on_start=None):
         except Exception as e:
             await event.respond(f"❌ Export failed: {str(e)}")
 
+    @bot.on(events.CallbackQuery(data=re.compile(b"set_filter_.*")))
+    async def handle_set_filter(event):
+        sender_id = event.sender_id
+        data = event.data.decode()
+
+        if sender_id not in user_filters:
+            user_filters[sender_id] = {"inactivity_days": 0, "spam_threshold": 0}
+
+        if data == "set_filter_inact_0": user_filters[sender_id]["inactivity_days"] = 0
+        elif data == "set_filter_inact_7": user_filters[sender_id]["inactivity_days"] = 7
+        elif data == "set_filter_inact_30": user_filters[sender_id]["inactivity_days"] = 30
+        elif data == "set_filter_spam_0": user_filters[sender_id]["spam_threshold"] = 0
+        elif data == "set_filter_spam_50": user_filters[sender_id]["spam_threshold"] = 50
+        elif data == "set_filter_spam_80": user_filters[sender_id]["spam_threshold"] = 80
+
+        await event.answer("✅ Filter Updated")
+        # Refresh the preview menu
+        await handle_run_cleanup(event)
+
     @bot.on(events.CallbackQuery(data=b"confirm_cleanup"))
     async def handle_confirm_cleanup(event):
         sender_id = event.sender_id
@@ -477,14 +529,15 @@ async def start_bot(on_start=None):
         await event.edit(text, buttons=buttons)
 
         whitelist = set(user_whitelists.get(sender_id, []))
+        filters = user_filters.get(sender_id, {})
 
         if sender_id in active_tasks:
             active_tasks[sender_id].cancel()
 
-        task = asyncio.create_task(run_cleanup_task(sender_id, cleaner, whitelist))
+        task = asyncio.create_task(run_cleanup_task(sender_id, cleaner, whitelist, filters))
         active_tasks[sender_id] = task
 
-    async def run_cleanup_task(sender_id, cleaner, whitelist):
+    async def run_cleanup_task(sender_id, cleaner, whitelist, filters):
         try:
             # Dashboard message
             try:
@@ -513,7 +566,7 @@ async def start_bot(on_start=None):
                         pass
 
             cleaner.progress_callback = bot_progress_callback
-            await cleaner.run_cleanup(whitelist)
+            await cleaner.run_cleanup(whitelist, filters=filters)
 
             try:
                 await bot.send_message(sender_id, "🏁 **Cleanup Mission Complete!**\n\nYour account is now clean.", buttons=[
@@ -542,13 +595,19 @@ async def start_bot(on_start=None):
         cleaner = user_clients.pop(sender_id, None)
         if cleaner:
             try:
-                # Disconnect instead of log_out to keep the session file if they want to re-login,
-                # BUT the user said "Wipe Data", so we log_out.
-                await cleaner.client.log_out()
+                # Log out from Telegram servers (invalidates the session string)
+                if await cleaner.client.is_user_authorized():
+                    await cleaner.client.log_out()
                 await cleaner.client.disconnect()
             except Exception:
                 try: await cleaner.client.disconnect()
                 except: pass
+
+        # Clear in-memory data
+        if sender_id in user_states: del user_states[sender_id]
+        if sender_id in user_whitelists: del user_whitelists[sender_id]
+        if sender_id in user_dialogs: del user_dialogs[sender_id]
+        if sender_id in user_filters: del user_filters[sender_id]
 
         # Thoroughly clean up all user-related files
         session_prefix = f"user_{sender_id}"
