@@ -8,7 +8,8 @@ from datetime import datetime
 import getpass
 
 from telethon import TelegramClient, errors
-from telethon.tl.types import Channel, User
+from telethon.sessions import StringSession
+from telethon.tl.types import Channel, User, MessageService
 from telethon.tl.functions.channels import LeaveChannelRequest
 from telethon.tl.functions.contacts import BlockRequest
 
@@ -59,19 +60,28 @@ class AdaptiveRateLimiter:
 class TelegramCleaner:
     """A class to encapsulate the logic for cleaning a Telegram account."""
 
-    def __init__(self, config, session_name=DEFAULT_SESSION, progress_callback=None):
+    def __init__(self, config, session_name=DEFAULT_SESSION, progress_callback=None, session_string=None):
         """
         Initializes the TelegramCleaner.
         Args:
             config (dict): api_id, api_hash, and phone (optional).
             session_name (str): Unique session name for this user.
             progress_callback (callable): Async function to report progress.
+            session_string (str): Optional Telethon StringSession string.
         """
         # Use a sessions/ directory for better security and organization
         os.makedirs("sessions", exist_ok=True)
-        session_path = os.path.join("sessions", session_name)
 
-        self.client = TelegramClient(session_path, config["api_id"], config["api_hash"])
+        # Use StringSession to avoid SQLite "database is locked" errors and disk I/O lag
+        session = StringSession(session_string) if session_string else StringSession()
+
+        self.client = TelegramClient(
+            session,
+            config["api_id"],
+            config["api_hash"],
+            use_ipv6=True, # Often faster if available
+            flood_sleep_threshold=10 # Let the AdaptiveRateLimiter handle long waits
+        )
         self.phone = config.get("phone")
         self.session_name = session_name
         self.pref_file = os.path.join("sessions", f"{session_name}_prefs.json")
@@ -79,7 +89,7 @@ class TelegramCleaner:
 
         self.progress_callback = progress_callback
         self.logs = self._init_logs()
-        self.prefs = {"kept_items": []}
+        self.prefs = {"kept_items": [], "session_string": session_string}
         self.progress = {"processed_ids": []}
         self.whitelist_ids = set()
         self.system_whitelist_ids = set()
@@ -154,6 +164,10 @@ class TelegramCleaner:
 
     def _save_data(self):
         """Saves preferences, progress, and logs to files."""
+        # Update session string if available
+        if self.client.is_connected():
+            self.prefs["session_string"] = self.client.session.save()
+
         _atomic_write(self.pref_file, self.prefs)
 
         _atomic_write(self.progress_file, self.progress)
@@ -161,6 +175,75 @@ class TelegramCleaner:
         log_file = f"cleanup_{self.session_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         _atomic_write(log_file, self.logs)
         print(f"📝 State saved for {self.session_name}")
+
+    def calculate_spam_score(self, entity):
+        """Calculates a basic spam score (0-100) for an entity."""
+        score = 0
+        name = entity.title if hasattr(entity, 'title') else (getattr(entity, 'first_name', '') or '')
+        username = getattr(entity, 'username', '') or ''
+
+        # Patterns common in spam bots
+        spam_patterns = ['crypto', 'invest', 'trading', 'profit', 'casino', 'bet', 'porn', 'sex', 'hot', 'free', 'money']
+
+        for pattern in spam_patterns:
+            if pattern in name.lower() or pattern in username.lower():
+                score += 30
+
+        # Random numbers in username often indicate bots
+        if any(c.isdigit() for c in username):
+            digits = sum(c.isdigit() for c in username)
+            if digits > 3:
+                score += 20
+
+        return min(score, 100)
+
+    async def analyze_activity(self, dialogs):
+        """Analyzes dialogs for activity patterns."""
+        now = datetime.now()
+        stats = {
+            "inactive_7d": 0,
+            "inactive_30d": 0,
+            "inactive_90d": 0,
+            "total": len(dialogs)
+        }
+
+        for d in dialogs:
+            last_msg_date = d.date
+            if not last_msg_date:
+                stats["inactive_90d"] += 1
+                continue
+
+            # d.date is naive or utc? Telethon usually returns UTC aware
+            if last_msg_date.tzinfo:
+                delta = (datetime.now(last_msg_date.tzinfo) - last_msg_date).days
+            else:
+                delta = (now - last_msg_date).days
+
+            if delta >= 90: stats["inactive_90d"] += 1
+            elif delta >= 30: stats["inactive_30d"] += 1
+            elif delta >= 7: stats["inactive_7d"] += 1
+
+        return stats
+
+    async def export_data(self, dialogs):
+        """Exports a summary of dialogs to a JSON file before deletion."""
+        export_file = f"export_{self.session_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        data = []
+        for d in dialogs:
+            entity = d.entity
+            item = {
+                "id": entity.id,
+                "name": d.name,
+                "type": "Channel" if isinstance(entity, Channel) else "User",
+                "is_bot": getattr(entity, 'bot', False),
+                "username": getattr(entity, 'username', None),
+                "last_message_date": d.date.isoformat() if d.date else None,
+                "spam_score": self.calculate_spam_score(entity)
+            }
+            data.append(item)
+
+        _atomic_write(export_file, data)
+        return export_file
 
     def estimate_duration(self, total_chats, whitelisted_chats):
         """Calculates an estimated duration for the cleanup."""
