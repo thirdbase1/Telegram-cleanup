@@ -100,11 +100,15 @@ async def start_bot(on_start=None):
             "━━━━━━━━━━━━━━━━━━━━\n"
             "I will reset your account to a clean state by removing unwanted chats, "
             "blocking bots, and leaving channels/groups.\n\n"
+            "⚡ **Very Fast & Intelligent:** Even if you are in 1,000+ groups, I can "
+            "calculate the exact time and handle it efficiently with smart batching.\n\n"
+            "🛡️ **Your Privacy is our Priority:**\n"
+            "• **Login:** Securely handled via Telegram's official API.\n"
+            "• **Data:** We only see what you ask us to delete.\n"
+            "• **Cleanup:** Use the 'Logout & Wipe' button to instantly delete your "
+            "session and all your data from our server permanently.\n\n"
             "💡 **Whitelist Examples (Keep these!):**\n"
-            "• `James bot, @Michael, t.me/MyChannel` (Names/Links)\n"
-            "• `1685547486` (Numeric IDs)\n\n"
-            "🛡️ **Safe & Secure:** We auto-keep your 'Saved Messages' and this bot.\n"
-            "━━━━━━━━━━━━━━━━━━━━"
+            "• `@Michael, t.me/MyChannel, 1685547486`"
         )
 
         # Fast Login Check: Don't call network if we already know they are active
@@ -258,7 +262,9 @@ async def start_bot(on_start=None):
                 user_states[sender_id] = 'WAITING_CODE'
 
                 msg = (
-                    "📩 **Code sent!**\n\n"
+                    "📩 **Login Code Sent!**\n\n"
+                    "🔒 **Security Note:** This code is sent directly to Telegram to authorize this session. "
+                    "We do not store your credentials. Once you finish, you can 'Logout' to wipe everything.\n\n"
                     "⚠️ **IMPORTANT:** To prevent Telegram from cancelling the code, do NOT send it as a plain number.\n\n"
                     "Please send it in this format: `code: 1 2 3 4 5` (add 'code:' and spaces between digits)."
                 )
@@ -445,7 +451,12 @@ async def start_bot(on_start=None):
                 except: pass
 
         user_states[sender_id] = 'IDLE'
-        text = "👋 **Logged out successfully.**\n\nAll your session files and data have been permanently deleted from our server."
+        text = (
+            "👋 **Logged out successfully.**\n\n"
+            "🔒 **Privacy Guaranteed:** All your session files, preferences, and progress "
+            "data have been permanently deleted from our server. We no longer have "
+            "access to your account."
+        )
         buttons = [[Button.inline("🔙 Start Over", b"back_to_start")]]
         try:
             await event.edit(text, buttons=buttons)
